@@ -1,0 +1,21 @@
+# Local development database. Start: `docker compose up -d`   Stop: `docker compose down`
+# Data is kept in the "mongo-data" volume, so stopping the container does not delete it.
+services:
+  mongo:
+    image: mongo:8
+    container_name: outreach-mongo
+    restart: unless-stopped
+    ports:
+      # Host port 27018 (not 27017) so it never clashes with a MongoDB installed directly on Windows.
+      # Only reachable from this computer.
+      - "127.0.0.1:27018:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mongo-data:
