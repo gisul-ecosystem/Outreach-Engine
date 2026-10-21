@@ -34,6 +34,25 @@ const eslintConfig = defineConfig([
     },
   },
 
+  // The proxy (src/proxy.ts) runs before every request: JWT checks with jose only, never the database.
+  {
+    files: ["src/proxy.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [{ name: "mongoose", message: "proxy.ts must not use the database." }],
+          patterns: [
+            {
+              group: ["@/server/db", "@/server/db/*", "@/server/services/*", "@/server/lib/api"],
+              message: "proxy.ts may only use jose (via @/server/lib/auth), never the database.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
   globalIgnores([".next/**", "out/**", "build/**", "coverage/**", "next-env.d.ts"]),
 ]);
 

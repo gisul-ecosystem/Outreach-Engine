@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { UserMenu } from "@/components/auth/user-menu";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NAV_ITEMS, isNavItemActive } from "./nav-items";
@@ -14,7 +15,7 @@ export function TopBar() {
       <SidebarTrigger className="-ml-1" />
       <Separator orientation="vertical" className="mr-2 h-4" />
       <h1 className="text-sm font-medium">{current?.title ?? "Outreach Engine"}</h1>
-      {/* Phase 1 adds the signed-in user's email and a Logout button here. */}
+      <UserMenu />
     </header>
   );
 }

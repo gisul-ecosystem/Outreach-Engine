@@ -14,6 +14,11 @@ mongoose.set("strictQuery", true);
 
 export async function connectDB(): Promise<typeof mongoose> {
   if (cache.conn) return cache.conn;
+  // Already connected some other way (e.g. tests using an in-memory MongoDB) → reuse it.
+  if (mongoose.connection.readyState === mongoose.ConnectionStates.connected) {
+    cache.conn = mongoose;
+    return cache.conn;
+  }
 
   cache.promise ??= mongoose.connect(getEnv().MONGODB_URI, {
     bufferCommands: false,

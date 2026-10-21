@@ -23,8 +23,34 @@ npm-debug.log*
 
 # misc
 .DS_Store
+Thumbs.db
+desktop.ini
 *.pem
+*.key
 .vercel
+
+# editors and personal tool settings
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.claude/settings.local.json
+
+# prettier settings stay local
+.prettierrc*
+.prettierignore
+
+# markdown docs stay local; only the README is published
+*.md
+!/README.md
+
+# local data and scratch files (real contact exports, database dumps, temp scripts)
+*.csv
+!samples/*.csv
+dump/
+backups/
+tmp/
+scripts/.tmp/
 
 # typescript
 *.tsbuildinfo

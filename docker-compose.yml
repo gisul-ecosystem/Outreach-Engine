@@ -1,5 +1,30 @@
-# Local development database. Start: `docker compose up -d`   Stop: `docker compose down`
-# Data is kept in the "mongo-data" volume, so stopping the container does not delete it.
+# Outreach Engine — Docker setup.
+#
+# DAY-TO-DAY DEVELOPMENT (only MongoDB in Docker, app runs with `npm run dev:all`):
+#   Start:  docker compose up -d
+#   Stop:   docker compose down          (data is kept in the "mongo-data" volume)
+#
+# FULL STACK IN DOCKER (MongoDB + web + worker, production-style):
+#   Start:  docker compose --profile app up -d --build
+#   Stop:   docker compose --profile app down
+#   Needs a filled-in .env.local (copy .env.example). DRY_RUN=true stays the safe default.
+#   First run only, to create the admin user and indexes:
+#     docker compose --profile app run --rm web npm run db:indexes
+#     docker compose --profile app run --rm web npm run seed
+
+x-app: &app
+  build: .
+  image: outreach-engine:latest
+  restart: unless-stopped
+  profiles: ["app"]
+  env_file: .env.local
+  environment:
+    # Inside the Docker network MongoDB is "mongo:27017" (27018 is only the port on your computer).
+    MONGODB_URI: mongodb://mongo:27017/outreach
+  depends_on:
+    mongo:
+      condition: service_healthy
+
 services:
   mongo:
     image: mongo:8
@@ -16,6 +41,34 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 20s
+
+  web:
+    <<: *app
+    container_name: outreach-web
+    command: ["npm", "run", "start"]
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/outreach
+      APP_URL: http://localhost:3000
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Background sender. Run exactly ONE (it holds a lock; never use `--scale worker=2`).
+  worker:
+    <<: *app
+    container_name: outreach-worker
+    command: ["npm", "run", "worker"]
+    # Lets the worker finish an in-progress send before it stops (it waits up to 30 s).
+    stop_grace_period: 40s
+    depends_on:
+      mongo:
+        condition: service_healthy
 
 volumes:
   mongo-data:
