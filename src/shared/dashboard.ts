@@ -25,6 +25,8 @@ export type DashboardSummaryDTO = {
   mode: SendingModeDTO;
   workerRunning: boolean;
   timezone: string;
+  /** Campaigns the engine paused by itself (stop-on-error) — shown as red alerts. */
+  alerts: { campaignId: string; campaignName: string; reason: string }[];
 };
 
 export type DashboardInboxDTO = {

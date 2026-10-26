@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AlertTriangleIcon,
   ArrowLeftIcon,
   PauseIcon,
   PencilIcon,
@@ -34,10 +35,13 @@ import {
   MessageStatusBadge,
   ProgressBar,
 } from "./campaign-status-badge";
+import { CampaignTestSendDialog } from "./campaign-test-send-dialog";
 import { DeleteCampaignDialog } from "./delete-campaign-dialog";
+import { ReadinessPanel } from "./readiness-panel";
 import {
   useCampaign,
   useCampaignMessages,
+  useCampaignReadiness,
   useCampaignStats,
   usePauseResumeCampaign,
 } from "./use-campaigns";
@@ -56,10 +60,16 @@ export function CampaignDetail({ id }: { id: string }) {
   const [status, setStatus] = useState(ALL);
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [testOpen, setTestOpen] = useState(false);
   const debouncedSearch = useDebouncedValue(search.trim());
 
   const campaign = useCampaign(id);
   const live = campaign.data?.status === "running";
+  // Before Start (draft) and Resume (paused): the saved email and the setup, checked on the server.
+  const startable = campaign.data?.status === "draft" || campaign.data?.status === "paused";
+  const readiness = useCampaignReadiness(startable ? id : null);
+  const readinessItems = [...(readiness.data?.saved ?? []), ...(readiness.data?.setup ?? [])];
+  const mustFix = readinessItems.filter((i) => i.level === "error").length;
   const stats = useCampaignStats(id, live);
   const messages = useCampaignMessages(
     id,
@@ -131,6 +141,25 @@ export function CampaignDetail({ id }: { id: string }) {
             {c.inboxIds.length === 1 ? "" : "es"} · {describeWindow(c.sendWindow)}
             {s ? ` (${s.timezone})` : ""}
           </p>
+          {c.followUpOf && (
+            <p className="text-sm text-muted-foreground">
+              Follow-up: sent {c.followUpAfterDays} days after the first email, only to people who
+              did not reply, in the same thread.
+            </p>
+          )}
+          {c.templates.length > 1 && (
+            <p className="text-sm text-muted-foreground">
+              Templates:{" "}
+              {c.templates
+                .map((t) =>
+                  t.matchValues.length ? `${t.name} (${t.matchValues.join(", ")})` : t.name,
+                )
+                .join(" · ")}
+              {c.variantColumn
+                ? ` — chosen by ${c.variantColumn}; others take turns`
+                : " — in turn"}
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           {editable && (
@@ -154,7 +183,8 @@ export function CampaignDetail({ id }: { id: string }) {
           )}
           {c.status === "paused" && (
             <Button
-              disabled={pauseResume.isPending}
+              disabled={pauseResume.isPending || mustFix > 0}
+              title={mustFix > 0 ? "Fix the red items in the readiness list first" : undefined}
               onClick={() => pauseResume.mutate({ id: c.id, action: "resume" })}
             >
               <PlayIcon />
@@ -169,6 +199,39 @@ export function CampaignDetail({ id }: { id: string }) {
           )}
         </div>
       </div>
+
+      {c.pauseReason && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/60 dark:text-red-200"
+        >
+          <AlertTriangleIcon className="mt-0.5 size-4 shrink-0" />
+          <span>{c.pauseReason}</span>
+        </div>
+      )}
+
+      {startable && (
+        <>
+          <ReadinessPanel
+            items={readinessItems}
+            versionNames={c.templates.map((t) => t.name)}
+            loading={readiness.isPending}
+            onSendTest={() => setTestOpen(true)}
+            onEditEmail={() => router.push(`/campaigns/${c.id}/edit`)}
+            title={
+              c.status === "draft"
+                ? "Outlook readiness (before Start)"
+                : "Outlook readiness (before Resume)"
+            }
+          />
+          <CampaignTestSendDialog
+            campaignId={c.id}
+            inboxes={readiness.data?.inboxes ?? []}
+            open={testOpen}
+            onOpenChange={setTestOpen}
+          />
+        </>
+      )}
 
       {c.status === "draft" ? (
         <p className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
@@ -284,6 +347,21 @@ export function CampaignDetail({ id }: { id: string }) {
                             </Tooltip>
                           ) : (
                             <MessageStatusBadge status={m.status} />
+                          )}
+                          {m.bounce && (
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <span className="ml-2 cursor-help text-xs font-medium text-destructive" />
+                                }
+                              >
+                                Bounced {m.bounce.code}
+                              </TooltipTrigger>
+                              <TooltipContent>{m.bounce.message}</TooltipContent>
+                            </Tooltip>
+                          )}
+                          {m.repliedAt && (
+                            <span className="ml-2 text-xs text-muted-foreground">Replied</span>
                           )}
                         </TableCell>
                         <TableCell className="text-muted-foreground">

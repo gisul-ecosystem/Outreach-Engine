@@ -12,22 +12,35 @@ import {
   type MessageDoc,
 } from "@/server/db/models";
 import { notDeleted } from "@/server/db/soft-delete";
+import {
+  campaignTemplates,
+  composeEmail,
+  pickTemplate,
+  senderOf,
+  type CampaignTemplates,
+} from "@/server/lib/compose";
+import { checkEmailContent } from "@/server/lib/content-check";
 import { ApiError } from "@/server/lib/errors";
-import { renderEmail, type TemplateContact } from "@/server/lib/template";
+import { renderEmail, type EmailTemplate, type TemplateContact } from "@/server/lib/template";
+import type { EmailProvider } from "@/server/providers";
 import { estimateFinishDate, isValidWindow, nextWindowStart } from "@/server/scheduler/time";
 import { logEvent } from "@/server/services/event.service";
+import { testSendFromInbox } from "@/server/services/inbox.service";
 import { releaseScheduledMessages } from "@/server/services/queue.service";
+import { readinessMustFix } from "@/server/services/readiness.service";
 import { getTimezone } from "@/server/services/settings.service";
 import type {
   CampaignDTO,
   CampaignPreviewDTO,
   CampaignStatsDTO,
+  CampaignVariantInput,
   MessageCounts,
   MessageDTO,
   StartCampaignResult,
 } from "@/shared/campaign";
 import type { Paginated } from "@/shared/common";
 import { MESSAGE_STATUSES, type CampaignStatus, type MessageStatus } from "@/shared/enums";
+import type { TestSendResult } from "@/shared/inbox";
 
 type CampaignRecord = CampaignDoc & { _id: Types.ObjectId; createdAt: Date; updatedAt: Date };
 type MessageRecord = MessageDoc & { _id: Types.ObjectId; createdAt: Date; updatedAt: Date };
@@ -66,6 +79,20 @@ function toDTO(c: CampaignRecord, listName: string | null, counts: MessageCounts
     subjectTemplate: c.subjectTemplate ?? "",
     bodyTemplate: c.bodyTemplate ?? "",
     bodyHtml: c.bodyHtml ?? null,
+    templates: campaignTemplates(c).map((t) => ({ name: t.name, matchValues: t.matchValues })),
+    templateName: c.templateName ?? "",
+    matchValues: [...(c.matchValues ?? [])],
+    variants: (c.variants ?? []).map((v) => ({
+      name: v.name,
+      subjectTemplate: v.subjectTemplate ?? "",
+      bodyTemplate: v.bodyTemplate ?? "",
+      bodyHtml: v.bodyHtml ?? null,
+      matchValues: [...(v.matchValues ?? [])],
+    })),
+    variantColumn: c.variantColumn ?? "",
+    followUpOf: c.followUpOf ? String(c.followUpOf) : null,
+    followUpAfterDays: c.followUpAfterDays ?? 3,
+    pauseReason: c.pauseReason ?? null,
     sendWindow: windowOf(c),
     status: c.status as CampaignStatus,
     startedAt: iso(c.startedAt),
@@ -238,6 +265,37 @@ export async function getCampaign(id: string): Promise<CampaignDTO> {
   return dto(await findCampaignOr404(id));
 }
 
+/**
+ * A follow-up must point at a normal (not follow-up) campaign that has no other follow-up yet:
+ * at most ONE follow-up per person. It uses the same list and inboxes as that campaign.
+ */
+async function followUpParent(parentId: string, ignoreCampaignId?: Types.ObjectId) {
+  const parent = await Campaign.findOne(notDeleted({ _id: parentId })).lean<CampaignRecord>();
+  if (!parent)
+    throw new ApiError(400, "INVALID_FOLLOW_UP", "followUpOf: That campaign does not exist");
+  if (parent.followUpOf) {
+    throw new ApiError(
+      400,
+      "INVALID_FOLLOW_UP",
+      "followUpOf: A follow-up cannot follow another follow-up",
+    );
+  }
+  const other = await Campaign.exists(
+    notDeleted({
+      followUpOf: parent._id,
+      ...(ignoreCampaignId ? { _id: { $ne: ignoreCampaignId } } : {}),
+    }),
+  );
+  if (other) {
+    throw new ApiError(
+      409,
+      "FOLLOW_UP_EXISTS",
+      `"${parent.name}" already has a follow-up (max 1 per contact)`,
+    );
+  }
+  return parent;
+}
+
 export async function createCampaign(input: {
   name: string;
   listId: string;
@@ -246,11 +304,23 @@ export async function createCampaign(input: {
   bodyTemplate: string;
   bodyHtml: string | null;
   sendWindow: SendWindow;
+  templateName?: string;
+  variantColumn?: string;
+  matchValues?: string[];
+  variants?: CampaignVariantInput[];
+  followUpOf?: string | null;
+  followUpAfterDays?: number;
 }): Promise<CampaignDTO> {
   await connectDB();
-  await assertListExists(input.listId);
-  await assertInboxesExist(input.inboxIds);
-  const created = await Campaign.create({ ...input, status: "draft" });
+  const data = { ...input };
+  if (input.followUpOf) {
+    const parent = await followUpParent(input.followUpOf);
+    data.listId = String(parent.listId);
+    data.inboxIds = (parent.inboxIds ?? []).map(String);
+  }
+  await assertListExists(data.listId);
+  await assertInboxesExist(data.inboxIds);
+  const created = await Campaign.create({ ...data, status: "draft" });
   await logEvent("campaign.created", `Campaign "${input.name}" created`, {
     campaignId: created._id,
   });
@@ -267,11 +337,23 @@ export async function updateCampaign(
     bodyTemplate?: string;
     bodyHtml?: string | null;
     sendWindow?: SendWindow;
+    templateName?: string;
+    variantColumn?: string;
+    matchValues?: string[];
+    variants?: CampaignVariantInput[];
+    followUpAfterDays?: number;
   },
 ): Promise<CampaignDTO> {
   await connectDB();
   const campaign = await findCampaignOr404(id);
   assertEditable(campaign);
+  if (campaign.followUpOf && (input.listId !== undefined || input.inboxIds !== undefined)) {
+    throw new ApiError(
+      409,
+      "FOLLOW_UP_LOCKED",
+      "A follow-up always uses the list and inboxes of the first campaign",
+    );
+  }
   if (input.listId !== undefined && input.listId !== String(campaign.listId)) {
     if (campaign.status !== "draft") {
       throw new ApiError(
@@ -356,19 +438,42 @@ export async function previewCampaign(
         .lean<TemplateContact & { _id: Types.ObjectId }>());
   }
 
-  const subjectTemplate = input.subjectTemplate ?? campaign.subjectTemplate ?? "";
-  const bodyTemplate = input.bodyTemplate ?? campaign.bodyTemplate ?? "";
-  const bodyHtml = input.bodyHtml !== undefined ? input.bodyHtml : (campaign.bodyHtml ?? null);
-  const rendered = renderEmail(
-    { subjectTemplate, bodyTemplate, bodyHtml },
-    contact ?? { email: "someone@example.com" },
-  );
+  // Typed-but-unsaved text (the editor) previews the main template; otherwise the version this contact gets.
+  const previewContact = contact ?? { email: "someone@example.com" };
+  const editing =
+    input.subjectTemplate !== undefined ||
+    input.bodyTemplate !== undefined ||
+    input.bodyHtml !== undefined;
+  const templates = campaignTemplates(campaign);
+  const saved = editing
+    ? templates[0]
+    : templates[pickTemplate(templates, campaign.variantColumn, previewContact, 0).index];
+  const subjectTemplate = input.subjectTemplate ?? saved.subjectTemplate;
+  const bodyTemplate = input.bodyTemplate ?? saved.bodyTemplate;
+  const bodyHtml = input.bodyHtml !== undefined ? input.bodyHtml : (saved.bodyHtml ?? null);
+  // The signature ({{senderName}}…) comes from the first inbox of the campaign.
+  const inbox = campaign.inboxIds?.length
+    ? await Inbox.findById(campaign.inboxIds[0])
+        .select("email displayName senderName senderRole")
+        .lean()
+    : null;
+  const rendered = renderEmail({ subjectTemplate, bodyTemplate, bodyHtml }, previewContact, {
+    ...(inbox ? senderOf(inbox) : {}),
+    // Each person's real first-email subject is only known when the follow-up is sent.
+    originalSubject: campaign.followUpOf ? "(subject of the first email)" : null,
+  });
 
   const warnings: string[] = [];
   if (!contact) warnings.push("This list has no contacts yet — the preview uses empty values.");
   if (!subjectTemplate.trim()) warnings.push("The subject is empty.");
   if (!bodyTemplate.trim()) warnings.push("The email body is empty.");
-  warnings.push(...rendered.warnings);
+  if (templates.length > 1 && !editing)
+    warnings.push(`This contact gets the "${saved.name}" version.`);
+  if (rendered.missing.length > 0) {
+    warnings.push("This contact will be SKIPPED (not emailed) because a field it needs is empty.");
+  }
+  const content = checkEmailContent({ subjectTemplate, bodyTemplate, bodyHtml });
+  warnings.push(...rendered.warnings, ...content.problems, ...content.warnings);
 
   return {
     contact: contact
@@ -386,6 +491,64 @@ export async function previewCampaign(
     warnings,
     customVariables: await customVariablesOf(listId),
   };
+}
+
+// ---------- test to myself ----------
+
+/**
+ * "Send test to myself": the campaign's email (the main version, or `version`) filled in with the
+ * list's first active contact, sent to `to` from one of the campaign's inboxes through the normal
+ * inbox test-send (same suppression and DRY_RUN rules). Remembered for the readiness check.
+ */
+export async function testSendCampaign(
+  id: string,
+  input: { to: string; inboxId?: string; version?: number },
+  options: { provider?: EmailProvider } = {},
+): Promise<TestSendResult> {
+  await connectDB();
+  const campaign = await findCampaignOr404(id);
+  const inboxIds = (campaign.inboxIds ?? []).map(String);
+  const inboxId = input.inboxId ?? inboxIds[0];
+  if (!inboxId || !inboxIds.includes(inboxId)) {
+    throw new ApiError(400, "INVALID_INBOX", "Choose one of this campaign's inboxes first");
+  }
+  const inbox = await Inbox.findOne(notDeleted({ _id: inboxId }))
+    .select("email displayName senderName senderRole")
+    .lean();
+  if (!inbox) throw new ApiError(400, "INVALID_INBOX", "That inbox was deleted");
+
+  const templates = campaignTemplates(campaign);
+  const template = templates[input.version ?? 0] ?? templates[0];
+  const sample = await Contact.findOne(notDeleted({ listIds: campaign.listId, status: "active" }))
+    .sort({ createdAt: 1, _id: 1 })
+    .lean<TemplateContact>();
+  const { rendered, input: email } = composeEmail({
+    template,
+    contact: { ...(sample ?? {}), email: input.to },
+    inbox,
+    to: input.to,
+    originalSubject: campaign.followUpOf ? "Your first email's subject" : null,
+  });
+  if (rendered.missing.length) {
+    throw new ApiError(
+      400,
+      "MISSING_FIELDS",
+      `The test cannot be built: ${rendered.missing.map((n) => `{{${n}}}`).join(", ")} is empty${sample ? ` for the sample contact ${sample.email}` : ""}. Add a fallback or fill in the inbox signature.`,
+    );
+  }
+  const result = await testSendFromInbox(String(inbox._id), input.to, {
+    provider: options.provider,
+    email: {
+      subject: email.subject,
+      text: email.text,
+      html: email.html,
+      messageId: email.messageId,
+      listUnsubscribe: email.listUnsubscribe,
+    },
+    campaignId: campaign._id,
+  });
+  await Campaign.updateOne({ _id: campaign._id }, { $set: { testSentAt: new Date() } });
+  return result;
 }
 
 // ---------- start / pause / resume ----------
@@ -422,10 +585,30 @@ function skipReason(status: string, suppressed: boolean) {
   return null;
 }
 
-/** One message per contact in the list: `pending`, or `skipped` (with the reason) if it must not be emailed. */
+/** Sender values are checked per inbox in startProblems, so here they only need to be "filled in". */
+const ANY_SENDER = { name: "-", role: "-", email: "-", originalSubject: "-" };
+
+/** Skipped instead of sent when the template needs a field this contact does not have ("Hi ,"). */
+export function missingFieldsReason(template: EmailTemplate, contact: TemplateContact) {
+  const { missing } = renderEmail(template, contact, ANY_SENDER);
+  if (missing.length === 0) return null;
+  return {
+    code: "MISSING_FIELDS",
+    message: `Not sent: ${missing.map((name) => `{{${name}}}`).join(", ")} empty for this contact`,
+  };
+}
+
+type ContactRow = TemplateContact & { _id: Types.ObjectId; status: string };
+
+/**
+ * One message per contact in the list: `pending`, or `skipped` (with the reason) if it must not be emailed.
+ * Each message gets its template version (rotation): the contact's column decides, otherwise in turn.
+ */
 async function createMessages(campaign: CampaignRecord): Promise<number> {
+  const templates = campaignTemplates(campaign);
+  let unmatchedTurn = 0;
   let created = 0;
-  let batch: { _id: Types.ObjectId; email: string; status: string }[] = [];
+  let batch: ContactRow[] = [];
 
   const flush = async () => {
     if (batch.length === 0) return;
@@ -437,13 +620,19 @@ async function createMessages(campaign: CampaignRecord): Promise<number> {
       ).map((s) => s.email),
     );
     const docs = batch.map((c) => {
-      const reason = skipReason(c.status, suppressed.has(c.email));
+      const pick = pickTemplate(templates, campaign.variantColumn, c, unmatchedTurn);
+      if (!pick.matched) unmatchedTurn++;
+      const template = templates[pick.index];
+      const reason =
+        skipReason(c.status, suppressed.has(c.email)) ?? missingFieldsReason(template, c);
       return {
         campaignId: campaign._id,
         contactId: c._id,
         toEmail: c.email,
         status: reason ? "skipped" : "pending",
         error: reason,
+        variantIndex: pick.index,
+        templateName: template.name,
       };
     });
     created += await insertIgnoringDuplicates(docs);
@@ -451,16 +640,83 @@ async function createMessages(campaign: CampaignRecord): Promise<number> {
   };
 
   const cursor = Contact.find(notDeleted({ listIds: campaign.listId }))
-    .select("email status")
+    .select("email status firstName lastName company title custom")
     .sort({ _id: 1 })
-    .lean<{ _id: Types.ObjectId; email: string; status: string }[]>()
+    .lean<ContactRow[]>()
     .cursor({ batchSize: BATCH });
   for await (const contact of cursor) {
-    batch.push(contact as unknown as { _id: Types.ObjectId; email: string; status: string });
+    batch.push(contact as unknown as ContactRow);
     if (batch.length >= BATCH) await flush();
   }
   await flush();
   return created;
+}
+
+/**
+ * Follow-ups are created as people become due: the first email was sent at least `followUpAfterDays`
+ * ago, got no reply and did not bounce. Called by the planner every tick; safe to repeat (unique index).
+ * The follow-up must come from the inbox that sent the first email (same thread), so it is remembered.
+ */
+export async function syncFollowUpMessages(
+  campaign: CampaignTemplates & {
+    _id: Types.ObjectId;
+    followUpOf?: Types.ObjectId | null;
+    followUpAfterDays?: number | null;
+  },
+  now = new Date(),
+): Promise<number> {
+  if (!campaign.followUpOf) return 0;
+  const cutoff = new Date(now.getTime() - (campaign.followUpAfterDays ?? 3) * 24 * 60 * 60 * 1000);
+  const existing = await Message.find({ campaignId: campaign._id })
+    .select("parentMessageId")
+    .lean();
+  const done = existing.flatMap((m) => (m.parentMessageId ? [m.parentMessageId] : []));
+  const due = await Message.find({
+    campaignId: campaign.followUpOf,
+    status: "sent",
+    sentAt: { $lte: cutoff },
+    repliedAt: null,
+    bounce: null,
+    _id: { $nin: done },
+  })
+    .select("contactId toEmail inboxId")
+    .limit(BATCH)
+    .lean();
+  if (due.length === 0) return 0;
+
+  const [contacts, suppressed] = await Promise.all([
+    Contact.find({ _id: { $in: due.map((m) => m.contactId) } })
+      .select("email status deletedAt firstName lastName company title custom")
+      .lean<(ContactRow & { deletedAt?: Date | null })[]>(),
+    Suppression.find({ email: { $in: due.map((m) => m.toEmail) } })
+      .select("email")
+      .lean(),
+  ]);
+  const byId = new Map(contacts.map((c) => [String(c._id), c]));
+  const blocked = new Set(suppressed.map((s) => s.email));
+  const template = campaignTemplates(campaign)[0];
+
+  const docs = due.map((parent) => {
+    const contact = byId.get(String(parent.contactId));
+    const reason = !contact
+      ? { code: "CONTACT_DELETED", message: "The contact was deleted" }
+      : contact.deletedAt
+        ? { code: "CONTACT_DELETED", message: "The contact was deleted" }
+        : (skipReason(contact.status, blocked.has(parent.toEmail)) ??
+          missingFieldsReason(template, contact));
+    return {
+      campaignId: campaign._id,
+      contactId: parent.contactId,
+      toEmail: parent.toEmail,
+      status: reason ? "skipped" : "pending",
+      error: reason,
+      variantIndex: 0,
+      templateName: template.name,
+      parentMessageId: parent._id,
+      parentInboxId: parent.inboxId,
+    };
+  });
+  return insertIgnoringDuplicates(docs);
 }
 
 /** What is missing before a campaign can start (empty = ready). */
@@ -470,12 +726,25 @@ async function startProblems(campaign: CampaignRecord): Promise<string[]> {
   if (!listOk) problems.push("The list was deleted — choose another list");
   if (!campaign.subjectTemplate?.trim()) problems.push("Write a subject");
   if (!campaign.bodyTemplate?.trim()) problems.push("Write the email body");
+  for (const variant of campaign.variants ?? []) {
+    if (!variant.subjectTemplate?.trim() || !variant.bodyTemplate?.trim()) {
+      problems.push(`Template "${variant.name}" needs a subject and a body`);
+    }
+  }
   if (!isValidWindow(windowOf(campaign))) problems.push("Choose at least one sending day");
   const { count } = await usableInboxes((campaign.inboxIds ?? []) as Types.ObjectId[]);
   if (count === 0) problems.push("Choose at least one active inbox (with an active domain)");
-  if (listOk && (await audienceOf(campaign.listId as Types.ObjectId)).sendable === 0) {
+  if (campaign.followUpOf) {
+    // People are added as they become due, so an empty list today is fine.
+    if (!(await Campaign.exists(notDeleted({ _id: campaign.followUpOf })))) {
+      problems.push("The first campaign of this follow-up was deleted");
+    }
+  } else if (listOk && (await audienceOf(campaign.listId as Types.ObjectId)).sendable === 0) {
     problems.push("No contact in this list can be emailed (empty, unsubscribed or suppressed)");
   }
+  // The readiness panel's "Must fix" items (wording, typos, placeholders, signatures, DNS), enforced
+  // here so they hold even if the browser is bypassed. Empty subject/body are reported above.
+  problems.push(...(await readinessMustFix(campaign, { skipChecks: ["subject", "body"] })));
   return problems;
 }
 
@@ -501,10 +770,12 @@ export async function startCampaign(id: string): Promise<StartCampaignResult> {
     throw new ApiError(400, "CAMPAIGN_NOT_READY", `Cannot start yet: ${problems.join("; ")}`);
   }
 
-  const created = await createMessages(campaign);
+  const created = campaign.followUpOf ? 0 : await createMessages(campaign);
   await Campaign.updateOne(
     { _id: campaign._id, status: "draft" },
-    { $set: { status: "running", startedAt: new Date() } },
+    {
+      $set: { status: "running", startedAt: new Date(), pauseReason: null, consecutiveFailures: 0 },
+    },
   );
   const result = await getCampaign(id);
   await logEvent(
@@ -526,7 +797,7 @@ export async function pauseCampaign(id: string): Promise<CampaignDTO> {
   const campaign = await findCampaignOr404(id);
   const result = await Campaign.updateOne(
     { _id: campaign._id, status: "running" },
-    { $set: { status: "paused" } },
+    { $set: { status: "paused", pauseReason: null } },
   );
   if (result.matchedCount === 0) {
     throw new ApiError(409, "CAMPAIGN_NOT_RUNNING", `Only a running campaign can be paused`);
@@ -540,13 +811,40 @@ export async function pauseCampaign(id: string): Promise<CampaignDTO> {
   return getCampaign(id);
 }
 
-/** paused → running (the worker picks it up again). */
+/**
+ * Stop-on-error: running → paused by the engine itself, with the reason (shown as a red alert on the
+ * dashboard). Its scheduled emails go back to the queue. Returns false if it was not running.
+ */
+export async function autoPauseCampaign(
+  campaignId: Types.ObjectId,
+  reason: string,
+): Promise<boolean> {
+  const paused = await Campaign.findOneAndUpdate(
+    { _id: campaignId, status: "running" },
+    { $set: { status: "paused", pauseReason: reason } },
+  );
+  if (!paused) return false;
+  await releaseScheduledMessages({ campaignId });
+  await logEvent("campaign.auto_paused", `ALERT: campaign "${paused.name}" paused — ${reason}`, {
+    campaignId,
+  });
+  return true;
+}
+
+/**
+ * paused → running (the worker picks it up again). The email and setup are checked again (the
+ * readiness "Must fix" items) in case something was edited while paused.
+ */
 export async function resumeCampaign(id: string): Promise<CampaignDTO> {
   await connectDB();
   const campaign = await findCampaignOr404(id);
+  const problems = campaign.status === "paused" ? await readinessMustFix(campaign) : [];
+  if (problems.length) {
+    throw new ApiError(400, "CAMPAIGN_NOT_READY", `Cannot resume yet: ${problems.join("; ")}`);
+  }
   const result = await Campaign.updateOne(
     { _id: campaign._id, status: "paused" },
-    { $set: { status: "running" } },
+    { $set: { status: "running", pauseReason: null, consecutiveFailures: 0 } },
   );
   if (result.matchedCount === 0) {
     throw new ApiError(409, "CAMPAIGN_NOT_PAUSED", "Only a paused campaign can be resumed");
@@ -595,6 +893,9 @@ export async function listCampaignMessages(
       sentAt: iso(m.sentAt),
       attempts: m.attempts,
       renderedSubject: m.renderedSubject ?? null,
+      templateName: m.templateName ?? null,
+      repliedAt: iso(m.repliedAt),
+      bounce: m.bounce?.code ? { code: m.bounce.code, message: m.bounce.message ?? "" } : null,
       error: m.error?.code ? { code: m.error.code, message: m.error.message ?? "" } : null,
       createdAt: m.createdAt.toISOString(),
       updatedAt: m.updatedAt.toISOString(),

@@ -12,8 +12,11 @@ import type {
   MessageDTO,
   PreviewCampaignInput,
   StartCampaignResult,
+  TestSendCampaignInput,
   UpdateCampaignInput,
 } from "@/shared/campaign";
+import type { TestSendResult } from "@/shared/inbox";
+import type { CampaignReadinessDTO } from "@/shared/readiness";
 
 /** Running campaigns refresh on their own (the worker changes their numbers). */
 const LIVE_REFRESH_MS = 10_000;
@@ -84,6 +87,35 @@ export function useCampaignPreview(id: string | null, input: PreviewCampaignInpu
       apiFetch<CampaignPreviewDTO>(`/api/campaigns/${id}/preview`, { method: "POST", body: input }),
     enabled: !!id,
     placeholderData: keepPreviousData,
+  });
+}
+
+/** Readiness facts from the database (columns, empty fields, inboxes, DNS, Mail.Read, test sent). */
+export function useCampaignReadiness(id: string | null) {
+  return useQuery({
+    queryKey: queryKeys.campaigns.readiness(id ?? ""),
+    queryFn: () => apiFetch<CampaignReadinessDTO>(`/api/campaigns/${id}/readiness`),
+    enabled: !!id,
+  });
+}
+
+/** "Send test to myself" (simulated while DRY_RUN=true). */
+export function useTestSendCampaign() {
+  const invalidate = useInvalidateCampaigns();
+  return useMutation({
+    mutationFn: ({ id, ...input }: TestSendCampaignInput & { id: string }) =>
+      apiFetch<TestSendResult>(`/api/campaigns/${id}/test-send`, { method: "POST", body: input }),
+    onSuccess: (result) => {
+      const format = result.format === "outlook" ? "Outlook format" : "MIME format";
+      if (result.mode === "dry-run") {
+        toast.success(`Test simulated (dry run, ${format}) — nothing was really sent.`);
+      } else {
+        toast.success(`Test sent to ${result.to} from ${result.from} (${format}).`, {
+          description: "Check that inbox (and its spam folder) in a minute.",
+        });
+      }
+      return invalidate();
+    },
   });
 }
 

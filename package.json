@@ -20,6 +20,8 @@
     "db:indexes": "tsx scripts/sync-indexes.ts",
     "simulate": "tsx scripts/simulate.ts",
     "check:dashboard": "tsx scripts/check-dashboard.ts",
+    "email:test": "tsx scripts/test-email.ts",
+    "mailbox:check": "tsx scripts/check-mailbox.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

@@ -1,7 +1,9 @@
+import { Types } from "mongoose";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { Domain, Inbox, ProviderConnection } from "@/server/db/models";
+import { Campaign, Contact, Domain, Inbox, Message, ProviderConnection } from "@/server/db/models";
 import { decrypt } from "@/server/lib/crypto";
 import type { EmailProvider } from "@/server/providers";
+import { resumeInbox, updateInbox } from "@/server/services/inbox.service";
 import {
   createProviderConnection,
   deleteProviderConnection,
@@ -88,21 +90,58 @@ describe("provider connections", () => {
     expect(decrypt(raw!.clientSecretEnc!)).toBe("another-secret-9");
   });
 
-  it("refuses to delete a connection that inboxes still use", async () => {
+  it("deletes an unused connection", async () => {
     const created = await createProviderConnection(input);
-    const domain = await Domain.create({ name: "tryracko.in" });
+    await expect(deleteProviderConnection(created.id)).resolves.toEqual({
+      id: created.id,
+      pausedInboxes: 0,
+    });
+    expect((await listProviders({ page: 1, limit: 20 })).total).toBe(0);
+  });
+
+  it("deleting a connection in use pauses and unlinks its inboxes and releases their queue", async () => {
+    const created = await createProviderConnection(input);
+    const other = await createProviderConnection({ ...input, name: "Other M365" });
+    const domain = await Domain.create({ name: "tryracko.in", providerConnectionId: created.id });
     const inbox = await Inbox.create({
       email: "a@tryracko.in",
       domainId: domain._id,
       providerConnectionId: created.id,
     });
-    await expect(deleteProviderConnection(created.id)).rejects.toMatchObject({
-      status: 409,
-      code: "PROVIDER_IN_USE",
+    const untouched = await Inbox.create({
+      email: "b@tryracko.in",
+      domainId: domain._id,
+      providerConnectionId: other.id,
+    });
+    const campaign = await Campaign.create({ name: "C", listId: new Types.ObjectId() });
+    const contact = await Contact.create({ email: "x@example.com" });
+    const message = await Message.create({
+      campaignId: campaign._id,
+      contactId: contact._id,
+      toEmail: contact.email,
+      inboxId: inbox._id,
+      status: "scheduled",
+      scheduledAt: new Date(),
     });
 
-    await Inbox.updateOne({ _id: inbox._id }, { deletedAt: new Date() });
-    await expect(deleteProviderConnection(created.id)).resolves.toEqual({ id: created.id });
-    expect((await listProviders({ page: 1, limit: 20 })).total).toBe(0);
+    await expect(deleteProviderConnection(created.id)).resolves.toEqual({
+      id: created.id,
+      pausedInboxes: 1,
+    });
+
+    const after = await Inbox.findById(inbox._id).lean();
+    expect(after).toMatchObject({ status: "paused", providerConnectionId: null, deletedAt: null });
+    expect(after?.pauseReason).toMatch(/Provider deleted/);
+    expect((await Inbox.findById(untouched._id).lean())?.status).toBe("active");
+    expect((await Domain.findById(domain._id).lean())?.providerConnectionId).toBeNull();
+    expect(await Message.findById(message._id).lean()).toMatchObject({
+      status: "pending",
+      inboxId: null,
+    });
+
+    // Cannot resume until a provider is chosen again.
+    await expect(resumeInbox(String(inbox._id))).rejects.toMatchObject({ code: "NO_PROVIDER" });
+    await updateInbox(String(inbox._id), { providerConnectionId: other.id });
+    await expect(resumeInbox(String(inbox._id))).resolves.toMatchObject({ status: "active" });
   });
 });

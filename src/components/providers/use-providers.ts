@@ -60,9 +60,15 @@ export function useDeleteProvider() {
   const invalidate = useInvalidate();
   return useMutation({
     mutationFn: (provider: Pick<ProviderDTO, "id" | "name">) =>
-      apiFetch<{ id: string }>(`/api/providers/${provider.id}`, { method: "DELETE" }),
-    onSuccess: (_result, provider) => {
-      toast.success(`Deleted ${provider.name}`);
+      apiFetch<{ id: string; pausedInboxes: number }>(`/api/providers/${provider.id}`, {
+        method: "DELETE",
+      }),
+    onSuccess: (result, provider) => {
+      toast.success(
+        result.pausedInboxes
+          ? `Deleted ${provider.name}. ${result.pausedInboxes} inbox(es) paused — edit them to choose a new provider.`
+          : `Deleted ${provider.name}`,
+      );
       return invalidate();
     },
     onError: (err) => toast.error(errorMessage(err)),

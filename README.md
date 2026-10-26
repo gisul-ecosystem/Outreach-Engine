@@ -13,7 +13,7 @@ with random gaps, inside a sending window, under a daily limit per inbox.
 ## Requirements
 
 - Node.js 20.9 or newer (developed on Node 24)
-- Docker Desktop (runs MongoDB locally)
+- MongoDB Community Server 8, installed on this computer (no Docker needed)
 
 ## Setup
 
@@ -23,11 +23,15 @@ with random gaps, inside a sending window, under a daily limit per inbox.
    npm install
    ```
 
-2. **Start MongoDB** (in Docker, on port **27018** so it never clashes with a MongoDB installed on Windows)
+2. **Install and start MongoDB** on this computer
 
-   ```bash
-   docker compose up -d
-   ```
+   - Download **MongoDB Community Server** from https://www.mongodb.com/try/download/community and install it
+     with "Install MongoD as a Service" ticked. It then runs in the background on port **27017** and starts
+     with Windows.
+   - Check it is running (PowerShell): `Get-Service MongoDB` → `Running`.
+     If it is `Stopped`, open PowerShell **as Administrator** and run `Start-Service MongoDB`.
+   - Keep enough free space on the drive that holds MongoDB's data folder: when the disk is full, MongoDB
+     stops itself. The folder is `dbPath` in `C:\Program Files\MongoDB\Server\8.0\bin\mongod.cfg`.
 
 3. **Create `.env.local`** — copy `.env.example` to `.env.local`, then generate the two secrets:
 
@@ -85,8 +89,15 @@ does this once (about 15 minutes).
 3. **API permissions → Add a permission → Microsoft Graph → Application permissions**:
    - `Mail.Send` (required to send), unless you use the safer option in step 4 below
    - `User.Read.All` (optional, read-only: lets the app check that a mailbox exists)
+   - `Mail.Read` (recommended, read-only: lets the worker find bounce reports and replies in the sending
+     inboxes, so bounced addresses and people who reply "no" are never emailed again, follow-ups skip
+     people who replied, and a 5.7.708 bounce pauses the campaign; in Outlook format it also reads the
+     Message-ID Microsoft gave each email from **Sent Items**, and finds the first email of a follow-up).
+     Without it sending still works.
 
    Then click **Grant admin consent for <your company>**. The status must show green ticks.
+   After adding a permission, press **Verify** on the app's Providers page: the app reads which permissions
+   Microsoft granted and warns you (Providers page and campaign readiness list) when `Mail.Read` is missing.
 
 4. **Certificates & secrets → Client secrets → New client secret** → choose an expiry (e.g. 12 months) →
    **Add**. Copy the **Value** column right away (it is shown only once). **Write down the expiry date**:
@@ -154,11 +165,57 @@ Test-ApplicationAccessPolicy -Identity ceo@yourcompany.com -AppId <client-id>
 
 When you add a new sending mailbox later, tag it (Option A step 2) or add it to the group (Option B step 1).
 
+### 5. Sending format: Outlook standard (default) or MIME
+
+Each provider connection has a **Sending format** (Providers → Edit):
+
+| Format                         | What happens                                                                                                                                                                                                                                                                               |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Outlook standard** (default) | The app sends Microsoft only the subject, the HTML text and the recipient (JSON). **Microsoft builds the email** — Message-ID, Date, plain-text version — exactly like an email typed in Outlook. A follow-up is a real **reply** to the first email (same conversation, subject `RE: …`). |
+| **Raw MIME** (the older way)   | The app builds the whole email itself (its own Message-ID, Reply-To, `List-Unsubscribe` header, text + HTML parts). A follow-up is a new email with `In-Reply-To` / `References` headers.                                                                                                  |
+
+**Switch back to MIME:** Providers → ⋯ → Edit → Sending format → **Raw MIME** → Save. Then restart the worker
+(`npm run worker` / `npm run dev:all`). Try a format without changing the setting:
+`npm run email:test -- --campaign "<name>" --to you@gmail.com --format mime` (add `--send --yes` to send).
+
+**Which permissions each part needs** (Application permissions, with admin consent):
+
+| What                                                             | Permission                                                                                                 |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Send an email (both formats)                                     | `Mail.Send`                                                                                                |
+| Follow-up as a reply, when the first email's id is already known | `Mail.Send` only                                                                                           |
+| Find the first email of a follow-up by its Message-ID            | `Mail.Read`                                                                                                |
+| Read the Message-ID Microsoft gave an Outlook-format email       | `Mail.Read` (without it: the email is sent, the Message-ID stays empty and bounces are matched by address) |
+| Bounces and replies                                              | `Mail.Read`                                                                                                |
+
+`Mail.ReadWrite` is **not** needed: the app uses Graph's one-step `reply` action, not "create a draft reply,
+then send it" (that way would need `Mail.ReadWrite`).
+
+**The name people see ("From")**: in Outlook format Microsoft always uses the mailbox's own **display name from
+Microsoft 365** — the app cannot change it. Set it in https://admin.microsoft.com → **Users → Active users →**
+the user → **Manage contact information → Display name** (it can take a few hours to show everywhere).
+The inbox's "Display name" field in this app is only used by the MIME format and the readiness checks; keep
+both the same.
+
+If the first email of a follow-up can't be found (deleted from Sent Items, or no `Mail.Read`), the follow-up is
+sent as a new email with its own subject, and the activity log says so.
+
 ### Dry run vs. real sending
 
-> While `DRY_RUN=true`, test emails are only simulated (written to the server log as `[DRY RUN] not really sent`).
+> While `DRY_RUN=true`, test emails are only simulated (written to the server log as
+> `[DRY RUN] not really sent (Outlook format (JSON))` or `(MIME format)` — the format the connection uses).
+> Nothing is sent in either format.
 > To send for real: set `DRY_RUN=false` **and** `SENDING_ENABLED=true` in `.env.local` and restart the app.
 > **Verify** works in both modes: it only asks Microsoft for a token and never sends email.
+
+### Outlook readiness (while writing a campaign)
+
+The campaign editor checks the email as you type (about half a second after you stop) and lists, in plain words,
+what is missing or risky: ✅ OK, ⚠️ Warning (you can still start) and ⛔ Must fix (Start / Resume is blocked —
+also by the server, so it can't be skipped). Many items have an **Add it** / **Use …** button that fixes the text,
+or **Show me** that selects the problem in the editor. The review step and the campaign page also check the
+inboxes, the domains' DNS, the `Mail.Read` permission and whether you sent yourself a test
+(**Send test to myself**).
 
 ## The worker (the background sender)
 
@@ -190,21 +247,22 @@ Run one part only with `npm run simulate -- main|window|pause|crash`.
 
 ## Scripts
 
-| Command                | What it does                                                |
-| ---------------------- | ----------------------------------------------------------- |
-| `npm run dev:all`      | Website and worker together (use this for daily work)       |
-| `npm run dev`          | Website only (http://localhost:3000)                        |
-| `npm run worker`       | Worker only (the background sender). Stop with Ctrl+C       |
-| `npm run typecheck`    | TypeScript type check                                       |
-| `npm run lint`         | ESLint (also blocks importing server code into client code) |
-| `npm test`             | Unit tests (vitest)                                         |
-| `npm run build`        | Production build                                            |
-| `npm start`            | Run the production build (after `npm run build`)            |
-| `npm run seed`         | Create the admin user + settings (safe to repeat)           |
-| `npm run db:indexes`   | Make MongoDB indexes match the models (safe to repeat)      |
-| `npm run simulate`     | Dry-run simulation of the worker in a separate database     |
-| `npm run format`       | Format all files with Prettier                              |
-| `docker compose up -d` | Start MongoDB · `docker compose down` stops it (data kept)  |
+| Command                 | What it does                                                                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev:all`       | Website and worker together (use this for daily work)                                                                                                                     |
+| `npm run dev`           | Website only (http://localhost:3000)                                                                                                                                      |
+| `npm run worker`        | Worker only (the background sender). Stop with Ctrl+C                                                                                                                     |
+| `npm run typecheck`     | TypeScript type check                                                                                                                                                     |
+| `npm run lint`          | ESLint (also blocks importing server code into client code)                                                                                                               |
+| `npm test`              | Unit tests (vitest)                                                                                                                                                       |
+| `npm run build`         | Production build                                                                                                                                                          |
+| `npm start`             | Run the production build (after `npm run build`)                                                                                                                          |
+| `npm run seed`          | Create the admin user + settings (safe to repeat)                                                                                                                         |
+| `npm run db:indexes`    | Make MongoDB indexes match the models (safe to repeat)                                                                                                                    |
+| `npm run simulate`      | Dry-run simulation of the worker in a separate database                                                                                                                   |
+| `npm run email:test`    | Show exactly what goes to Microsoft for a campaign (Outlook JSON or raw MIME); `--send --yes` sends it to test addresses; `--format outlook\|mime` tries the other format |
+| `npm run mailbox:check` | Look for bounce reports / replies in the sending inboxes now                                                                                                              |
+| `npm run format`        | Format all files with Prettier                                                                                                                                            |
 
 ## Project layout
 

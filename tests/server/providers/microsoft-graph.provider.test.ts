@@ -33,38 +33,54 @@ const graphError = (status: number, code: string, headers: Record<string, string
     headers,
   });
 
+/** The raw email Graph received (MIME mode: base64 body, Content-Type text/plain). */
+const sentMime = (call = 0) =>
+  Buffer.from(fetchMock.mock.calls[call][1].body, "base64").toString("utf8");
+
 describe("MicrosoftGraphProvider.send", () => {
-  it("POSTs to /users/{from}/sendMail with saveToSentItems and the bearer token", async () => {
+  it("POSTs the raw MIME email to /users/{from}/sendMail with the bearer token", async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 202 }));
-    await newProvider().send({
+    const result = await newProvider().send({
       from: "sales@tryracko.in",
-      fromName: "Sales",
+      fromName: "Sales Team",
       to: "lead@x.com",
       subject: "Hello",
       text: "Plain body",
+      messageId: "<abc@tryracko.in>",
+      listUnsubscribe: "<mailto:sales@tryracko.in?subject=unsubscribe>",
     });
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("https://graph.microsoft.com/v1.0/users/sales%40tryracko.in/sendMail");
     expect(init.method).toBe("POST");
     expect(init.headers.Authorization).toBe("Bearer token-abc");
-    const body = JSON.parse(init.body);
-    expect(body.saveToSentItems).toBe(true);
-    expect(body.message.subject).toBe("Hello");
-    expect(body.message.body).toEqual({ contentType: "Text", content: "Plain body" });
-    expect(body.message.toRecipients).toEqual([{ emailAddress: { address: "lead@x.com" } }]);
+    expect(init.headers["Content-Type"]).toBe("text/plain");
+    const mime = sentMime();
+    expect(mime).toContain('From: "Sales Team" <sales@tryracko.in>');
+    expect(mime).toContain("To: <lead@x.com>");
+    expect(mime).toContain("Subject: Hello");
+    expect(mime).toContain("Message-ID: <abc@tryracko.in>");
+    expect(mime).toContain('Reply-To: "Sales Team" <sales@tryracko.in>');
+    expect(mime).toContain("List-Unsubscribe: <mailto:sales@tryracko.in?subject=unsubscribe>");
+    expect(mime).toContain("MIME-Version: 1.0");
+    expect(mime).toContain("Content-Type: multipart/alternative;");
+    expect(mime).toContain("Content-Type: text/plain; charset=UTF-8");
+    expect(mime).toContain("Content-Type: text/html; charset=UTF-8");
+    expect(result.internetMessageId).toBe("<abc@tryracko.in>");
   });
 
-  it("sends HTML when given", async () => {
+  it("uses the given HTML part, and makes one from the text when there is none", async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 202 }));
     await newProvider().send({
       from: "a@b.co",
       to: "c@d.co",
       subject: "s",
       text: "t",
-      html: "<p>t</p>",
+      html: "<p>mine</p>",
     });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).message.body.contentType).toBe("HTML");
+    await newProvider().send({ from: "a@b.co", to: "c@d.co", subject: "s", text: "only text" });
+    expect(sentMime(0)).toContain("<p>mine</p>");
+    expect(sentMime(1)).toContain("<p>only text</p>");
   });
 
   it.each([
@@ -170,7 +186,7 @@ describe("token cache (until 5 minutes before expiry)", () => {
       .mockResolvedValueOnce({ accessToken: "t1", expiresOn: expiresIn(60) });
     const provider = newProvider();
     await expect(send(provider)).rejects.toMatchObject({ kind: "auth" });
-    await expect(send(provider)).resolves.toEqual({});
+    await expect(send(provider)).resolves.toMatchObject({ internetMessageId: expect.any(String) });
   });
 });
 

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { objectIdSchema, paginationSchema } from "./common";
+import { emailSchema } from "./email";
 import {
   CAMPAIGN_STATUSES,
   DEFAULTS,
@@ -11,6 +12,17 @@ import {
 /** Variables every contact has; custom.<key> comes from the CSV columns. */
 export const STANDARD_VARIABLES = ["firstName", "lastName", "company", "title", "email"] as const;
 export type StandardVariable = (typeof STANDARD_VARIABLES)[number];
+/**
+ * Variables about the sending: the inbox (for the signature) and, in a follow-up,
+ * originalSubject = the subject of the first email (e.g. "Re: {{originalSubject}}").
+ */
+export const SENDER_VARIABLES = [
+  "senderName",
+  "senderRole",
+  "senderEmail",
+  "originalSubject",
+] as const;
+export type SenderVariable = (typeof SENDER_VARIABLES)[number];
 
 /** BUILD_PLAN section 11: every email includes a simple opt-out line. */
 export const OPT_OUT_LINE = "Not relevant? Just reply 'no' and I won't email again.";
@@ -69,6 +81,31 @@ const inboxIds = z
   .max(MAX_CAMPAIGN_INBOXES)
   .transform((ids) => [...new Set(ids)]);
 
+/** Words in the rotation column that pick a template, e.g. ["ai", "ml"]. */
+const matchValues = z.array(z.string().trim().min(1).max(100)).max(50);
+const templateName = z.string().trim().max(200);
+/** Contact field that picks the template version: a standard field or custom.<key>. */
+const variantColumn = z
+  .string()
+  .trim()
+  .max(100)
+  .refine(
+    (v) => v === "" || /^(firstName|lastName|company|title|email|custom\.[\w.-]+)$/i.test(v),
+    "Use a contact field like title, company or custom.segment",
+  );
+
+/** An extra version of the campaign email (template rotation). */
+export const campaignVariantSchema = z.object({
+  name: z.string().trim().min(1, "Give the template a name").max(200),
+  subjectTemplate: subject,
+  bodyTemplate: body,
+  bodyHtml: body.nullable().default(null),
+  matchValues: matchValues.default([]),
+});
+export type CampaignVariantInput = z.output<typeof campaignVariantSchema>;
+const variants = z.array(campaignVariantSchema).max(5);
+const followUpAfterDays = z.number().int().min(1).max(30);
+
 /** A draft may be incomplete — Start checks that subject, body and inboxes are filled in. */
 export const createCampaignSchema = z.object({
   name,
@@ -82,6 +119,13 @@ export const createCampaignSchema = z.object({
     endMinute: DEFAULTS.sendWindow.endMinute,
     days: [...DEFAULTS.sendWindow.days],
   }),
+  templateName: templateName.default(""),
+  variantColumn: variantColumn.default(""),
+  matchValues: matchValues.default([]),
+  variants: variants.default([]),
+  /** Makes this campaign the follow-up of another one (same list and inboxes, set automatically). */
+  followUpOf: objectIdSchema.nullable().default(null),
+  followUpAfterDays: followUpAfterDays.default(3),
 });
 export type CreateCampaignInput = z.input<typeof createCampaignSchema>;
 
@@ -94,6 +138,11 @@ export const updateCampaignSchema = z
     bodyTemplate: body.optional(),
     bodyHtml: body.nullable().optional(),
     sendWindow: sendWindowSchema.optional(),
+    templateName: templateName.optional(),
+    variantColumn: variantColumn.optional(),
+    matchValues: matchValues.optional(),
+    variants: variants.optional(),
+    followUpAfterDays: followUpAfterDays.optional(),
   })
   .refine((v) => Object.values(v).some((value) => value !== undefined), "Nothing to update");
 export type UpdateCampaignInput = z.input<typeof updateCampaignSchema>;
@@ -109,6 +158,14 @@ export const previewCampaignSchema = z.object({
   bodyHtml: body.nullable().optional(),
 });
 export type PreviewCampaignInput = z.input<typeof previewCampaignSchema>;
+
+/** "Send test to myself": the campaign's email to one address (default: main version, first inbox). */
+export const testSendCampaignSchema = z.object({
+  to: emailSchema,
+  inboxId: objectIdSchema.optional(),
+  version: z.number().int().min(0).max(5).optional(),
+});
+export type TestSendCampaignInput = z.input<typeof testSendCampaignSchema>;
 
 export const listCampaignsQuerySchema = paginationSchema.extend({
   status: z.enum(CAMPAIGN_STATUSES).optional(),
@@ -131,6 +188,20 @@ export type CampaignDTO = {
   subjectTemplate: string;
   bodyTemplate: string;
   bodyHtml: string | null;
+  /** All template versions (the first is the main one) and the words that pick each. */
+  templates: { name: string; matchValues: string[] }[];
+  /** Name of the main template ("" = the campaign name) and the words that pick it. */
+  templateName: string;
+  matchValues: string[];
+  /** The extra versions, complete (for the editor). */
+  variants: CampaignVariantInput[];
+  /** Contact field used to pick the version; "" = versions are used in turn. */
+  variantColumn: string;
+  /** Set = this is the follow-up of that campaign. */
+  followUpOf: string | null;
+  followUpAfterDays: number;
+  /** Why the engine paused it by itself (stop-on-error), null otherwise. */
+  pauseReason: string | null;
   sendWindow: { startMinute: number; endMinute: number; days: number[] };
   status: CampaignStatus;
   startedAt: string | null;
@@ -195,6 +266,10 @@ export type MessageDTO = {
   sentAt: string | null;
   attempts: number;
   renderedSubject: string | null;
+  templateName: string | null;
+  repliedAt: string | null;
+  /** Bounce report found in the sending mailbox (e.g. 5.7.708). */
+  bounce: { code: string; message: string } | null;
   error: { code: string; message: string } | null;
   createdAt: string;
   updatedAt: string;

@@ -159,7 +159,8 @@ describe("previewCampaign", () => {
     expect(p.contact?.email).toBe("ann@acme.com");
     expect(p.subject).toBe("Quick question, Ann");
     expect(p.text).toBe("Hi Ann from Acme in Pune");
-    expect(p.warnings).toEqual([]);
+    // Only the content check's reminder: this test body has no opt-out line.
+    expect(p.warnings).toEqual([expect.stringContaining("no opt-out line")]);
     expect(p.customVariables).toEqual(["custom.city"]);
   });
 

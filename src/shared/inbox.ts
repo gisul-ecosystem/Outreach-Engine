@@ -4,7 +4,8 @@ import { emailSchema } from "./email";
 import { INBOX_STATUSES, type InboxStatus } from "./enums";
 
 export const MAX_DAILY_LIMIT = 200;
-export const MIN_GAP_SECONDS = 30;
+/** Never less than 2 minutes between two emails from one inbox (no bursts). */
+export const MIN_GAP_SECONDS = 120;
 export const MAX_GAP_SECONDS = 24 * 60 * 60;
 /** BUILD_PLAN section 11: new inboxes should start at 10–15/day; show a hint above this. */
 export const DAILY_LIMIT_HINT_ABOVE = 20;
@@ -20,6 +21,7 @@ const gapSeconds = z.coerce
   .min(MIN_GAP_SECONDS, `At least ${MIN_GAP_SECONDS} seconds`)
   .max(MAX_GAP_SECONDS, "At most 24 hours");
 const displayName = z.string().trim().max(100, "Display name is too long");
+const signatureField = z.string().trim().max(100, "Too long");
 
 const gapOrder = (v: { minGapSeconds?: number; maxGapSeconds?: number }) =>
   v.minGapSeconds === undefined ||
@@ -47,6 +49,10 @@ export type CreateInboxInput = z.input<typeof createInboxSchema>;
 export const updateInboxSchema = z
   .object({
     displayName: displayName.optional(),
+    /** {{senderName}} in templates (empty = the display name). */
+    senderName: signatureField.optional(),
+    /** {{senderRole}} in templates, e.g. "Business Development". */
+    senderRole: signatureField.optional(),
     providerConnectionId: objectIdSchema.optional(),
     dailyLimit: dailyLimit.optional(),
     minGapSeconds: gapSeconds.optional(),
@@ -78,6 +84,8 @@ export type InboxDTO = {
   id: string;
   email: string;
   displayName: string;
+  senderName: string;
+  senderRole: string;
   domainId: string;
   domainName: string;
   providerConnectionId: string | null;
@@ -98,6 +106,8 @@ export type TestSendResult = {
   to: string;
   from: string;
   providerMessageId: string | null;
+  /** How it was handed to Microsoft: "outlook" (JSON) or "mime". */
+  format: "outlook" | "mime";
 };
 
 // ---------- Import mailboxes from the provider (e.g. Microsoft 365) ----------

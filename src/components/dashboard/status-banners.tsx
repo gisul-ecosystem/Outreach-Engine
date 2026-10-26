@@ -40,7 +40,7 @@ function Banner({
   );
 }
 
-/** Yellow = dry run, red = worker stopped, grey = kill switch. Several can show at once. */
+/** Yellow = dry run, red = worker stopped or campaign auto-paused, grey = kill switch. Several can show at once. */
 export function StatusBanners({ summary }: { summary: DashboardSummaryDTO }) {
   const banners = [];
   if (summary.mode === "dry-run") {
@@ -60,6 +60,18 @@ export function StatusBanners({ summary }: { summary: DashboardSummaryDTO }) {
     banners.push(
       <Banner key="kill" icon={PauseCircleIcon} tone="grey" title="Sending paused (kill switch)">
         SENDING_ENABLED=false — the worker plans and sends nothing until it is turned on.
+      </Banner>,
+    );
+  }
+  for (const alert of summary.alerts ?? []) {
+    banners.push(
+      <Banner
+        key={`alert-${alert.campaignId}`}
+        icon={AlertTriangleIcon}
+        tone="red"
+        title={`Campaign “${alert.campaignName}” was paused automatically`}
+      >
+        {alert.reason} Fix the cause, then press Resume on the campaign.
       </Banner>,
     );
   }

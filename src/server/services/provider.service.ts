@@ -1,17 +1,19 @@
 import type { Types } from "mongoose";
 import { connectDB } from "@/server/db/connect";
-import { Inbox, ProviderConnection, type ProviderConnectionDoc } from "@/server/db/models";
+import { Domain, Inbox, ProviderConnection, type ProviderConnectionDoc } from "@/server/db/models";
 import { notDeleted } from "@/server/db/soft-delete";
 import { encrypt } from "@/server/lib/crypto";
 import { ApiError } from "@/server/lib/errors";
 import {
   clearMicrosoftTokenCache,
   getVerificationProvider,
+  sendFormatOf,
   type EmailProvider,
 } from "@/server/providers";
 import { logEvent } from "@/server/services/event.service";
+import { releaseScheduledMessages } from "@/server/services/queue.service";
 import type { Paginated } from "@/shared/common";
-import type { ProviderStatus, ProviderType } from "@/shared/enums";
+import type { ProviderStatus, ProviderType, SendFormat } from "@/shared/enums";
 import type { ProviderDTO } from "@/shared/provider";
 
 type ProviderRecord = ProviderConnectionDoc & {
@@ -31,6 +33,8 @@ function toDTO(p: ProviderRecord, inboxCount: number, secretSet: boolean): Provi
     status: p.status as ProviderStatus,
     lastCheckedAt: p.lastCheckedAt ? p.lastCheckedAt.toISOString() : null,
     lastError: p.lastError ?? null,
+    sendFormat: sendFormatOf(p),
+    grantedPermissions: p.grantedPermissions ? [...p.grantedPermissions] : null,
     inboxCount,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
@@ -93,6 +97,7 @@ export async function createProviderConnection(input: {
   tenantId: string;
   clientId: string;
   clientSecret: string;
+  sendFormat?: SendFormat;
 }): Promise<ProviderDTO> {
   await connectDB();
   const created = await ProviderConnection.create({
@@ -102,6 +107,7 @@ export async function createProviderConnection(input: {
     clientId: input.clientId,
     clientSecretEnc: encrypt(input.clientSecret),
     status: "unchecked",
+    ...(input.sendFormat ? { sendFormat: input.sendFormat } : {}),
   });
   await logEvent("provider.created", `Provider connection "${input.name}" added`);
   return dto(await findWithSecretOr404(String(created._id)));
@@ -109,13 +115,20 @@ export async function createProviderConnection(input: {
 
 export async function updateProviderConnection(
   id: string,
-  input: { name?: string; tenantId?: string; clientId?: string; clientSecret?: string },
+  input: {
+    name?: string;
+    tenantId?: string;
+    clientId?: string;
+    clientSecret?: string;
+    sendFormat?: SendFormat;
+  },
 ): Promise<ProviderDTO> {
   await connectDB();
   const existing = await findWithSecretOr404(id);
 
   const update: Record<string, unknown> = {};
   if (input.name !== undefined) update.name = input.name;
+  if (input.sendFormat !== undefined) update.sendFormat = input.sendFormat;
   if (input.tenantId !== undefined) update.tenantId = input.tenantId;
   if (input.clientId !== undefined) update.clientId = input.clientId;
   if (input.clientSecret !== undefined) update.clientSecretEnc = encrypt(input.clientSecret);
@@ -137,25 +150,59 @@ export async function updateProviderConnection(
       `Provider connection "${existing.name}" credentials changed`,
     );
   }
+  if (input.sendFormat !== undefined && input.sendFormat !== sendFormatOf(existing)) {
+    await logEvent(
+      "provider.updated",
+      `Provider connection "${existing.name}" now sends in ${input.sendFormat === "outlook" ? "Outlook" : "MIME"} format`,
+    );
+  }
   return dto(await findWithSecretOr404(id));
 }
 
-/** Soft delete. Refused while non-deleted inboxes still use this connection. */
-export async function deleteProviderConnection(id: string): Promise<{ id: string }> {
+export const PROVIDER_DELETED_REASON = "Provider deleted — edit the inbox to choose a new provider";
+
+/**
+ * Soft delete. Inboxes that used this connection are kept but paused and unlinked
+ * (providerConnectionId = null); their scheduled emails go back in the queue.
+ * The user picks a new provider for each inbox (Edit) and resumes it.
+ */
+export async function deleteProviderConnection(
+  id: string,
+): Promise<{ id: string; pausedInboxes: number }> {
   await connectDB();
   const existing = await findWithSecretOr404(id);
-  const inboxes = await Inbox.countDocuments(notDeleted({ providerConnectionId: existing._id }));
-  if (inboxes > 0) {
-    throw new ApiError(
-      409,
-      "PROVIDER_IN_USE",
-      `${inboxes} inbox${inboxes === 1 ? " uses" : "es use"} this connection. Delete or move ${inboxes === 1 ? "it" : "them"} first.`,
+
+  const inboxIds = (
+    await Inbox.find(notDeleted({ providerConnectionId: existing._id }))
+      .select("_id")
+      .lean()
+  ).map((i) => i._id);
+  // Pause first so the planner stops picking these inboxes, then release what was already planned.
+  if (inboxIds.length > 0) {
+    await Inbox.updateMany(
+      { _id: { $in: inboxIds } },
+      {
+        $set: {
+          status: "paused",
+          pauseReason: PROVIDER_DELETED_REASON,
+          providerConnectionId: null,
+        },
+      },
     );
   }
+  const released = await releaseScheduledMessages({ inboxIds });
+  await Domain.updateMany(
+    { providerConnectionId: existing._id },
+    { $set: { providerConnectionId: null } },
+  );
+
   await ProviderConnection.updateOne({ _id: existing._id }, { $set: { deletedAt: new Date() } });
   clearMicrosoftTokenCache(id);
-  await logEvent("provider.deleted", `Provider connection "${existing.name}" deleted`);
-  return { id };
+  const details = inboxIds.length
+    ? ` — ${inboxIds.length} inbox(es) paused and need a new provider${released ? `, ${released} scheduled email(s) back in the queue` : ""}`
+    : "";
+  await logEvent("provider.deleted", `Provider connection "${existing.name}" deleted${details}`);
+  return { id, pausedInboxes: inboxIds.length };
 }
 
 /**
@@ -170,9 +217,12 @@ export async function verifyProviderConnection(
   const existing = await findWithSecretOr404(id);
 
   let result: { ok: boolean; error?: string };
+  let permissions: string[] | null = null;
   try {
     const provider = options.provider ?? getVerificationProvider(existing);
     result = await provider.verifyConnection();
+    // Which permissions admin consent was given for (e.g. is Mail.Read there for bounces?).
+    if (result.ok) permissions = (await provider.grantedPermissions?.()) ?? null;
   } catch (err) {
     result = { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -184,6 +234,7 @@ export async function verifyProviderConnection(
         status: result.ok ? "connected" : "error",
         lastCheckedAt: new Date(),
         lastError: result.ok ? null : (result.error ?? "Verification failed"),
+        ...(result.ok ? { grantedPermissions: permissions } : {}),
       },
     },
   );

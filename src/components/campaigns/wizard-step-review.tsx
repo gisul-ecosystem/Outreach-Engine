@@ -1,22 +1,34 @@
 "use client";
 
 import { AlertTriangleIcon } from "lucide-react";
+import { useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { errorMessage } from "@/lib/client/api";
 import { formatDayInZone } from "@/lib/client/format";
 import type { CampaignDTO } from "@/shared/campaign";
+import { CampaignTestSendDialog } from "./campaign-test-send-dialog";
+import { ReadinessPanel } from "./readiness-panel";
 import { useCampaignStats } from "./use-campaigns";
-import { describeWindow, type WizardForm } from "./wizard-form";
+import { useLiveReadiness } from "./use-readiness";
+import { describeWindow, formTemplates, type WizardForm } from "./wizard-form";
 
-/** Step 5: what will happen when the campaign starts (numbers come from the server). */
+/**
+ * Step 5: what will happen when the campaign starts (numbers come from the server), and the
+ * Outlook readiness list: the email checks plus the sender / domain / permission / test checks.
+ */
 export function WizardStepReview({
   campaign,
   form,
+  onEditEmail,
 }: {
   campaign: CampaignDTO | undefined;
   form: WizardForm;
+  onEditEmail: () => void;
 }) {
   const stats = useCampaignStats(campaign?.id ?? null);
+  const templates = formTemplates(form);
+  const live = useLiveReadiness(campaign?.id ?? null, templates, form.followUpOf !== null);
+  const [testOpen, setTestOpen] = useState(false);
 
   if (stats.isError) return <p className="text-sm text-destructive">{errorMessage(stats.error)}</p>;
   if (!stats.data || !campaign) {
@@ -76,6 +88,29 @@ export function WizardStepReview({
           None of the chosen inboxes can send (paused, deleted or domain paused). Go back to step 2.
         </p>
       )}
+
+      {form.variants.length > 0 && (
+        <p className="text-sm text-muted-foreground">
+          {form.variants.length + 1} versions:{" "}
+          {[form.templateName || form.name, ...form.variants.map((v) => v.name)].join(" · ")}
+          {form.variantColumn ? ` — picked by ${form.variantColumn}, others in turn` : " — in turn"}
+          . The main version is shown below.
+        </p>
+      )}
+
+      <ReadinessPanel
+        items={[...live.content, ...live.setup]}
+        versionNames={templates.map((t, i) => t.name || (i === 0 ? "Main" : `Version ${i + 1}`))}
+        loading={live.readiness.isPending}
+        onSendTest={() => setTestOpen(true)}
+        onEditEmail={onEditEmail}
+      />
+      <CampaignTestSendDialog
+        campaignId={campaign.id}
+        inboxes={live.readiness.data?.inboxes ?? []}
+        open={testOpen}
+        onOpenChange={setTestOpen}
+      />
 
       <div className="grid gap-1 rounded-lg border p-4 text-sm">
         <span className="text-xs text-muted-foreground">Subject</span>

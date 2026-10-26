@@ -68,6 +68,11 @@ export async function getDashboardSummary(now = new Date()): Promise<DashboardSu
   }
 
   const idleReason = nextEmail ? null : await explainIdle(now, tz);
+  const autoPaused = await Campaign.find(
+    notDeleted({ status: "paused", pauseReason: { $nin: [null, ""] } }),
+  )
+    .select("name pauseReason")
+    .lean();
 
   return {
     sentToday,
@@ -83,6 +88,11 @@ export async function getDashboardSummary(now = new Date()): Promise<DashboardSu
     mode: sendingMode(),
     workerRunning,
     timezone: tz,
+    alerts: autoPaused.map((c) => ({
+      campaignId: String(c._id),
+      campaignName: c.name,
+      reason: c.pauseReason ?? "",
+    })),
   };
 }
 

@@ -2,13 +2,18 @@ import type { Types } from "mongoose";
 import { getEnv } from "@/server/config/env";
 import { decrypt } from "@/server/lib/crypto";
 import { ApiError } from "@/server/lib/errors";
+import { DEFAULT_SEND_FORMAT, SEND_FORMATS, type SendFormat } from "@/shared/enums";
 import { FakeProvider } from "./fake.provider";
 import { MicrosoftGraphProvider } from "./microsoft-graph.provider";
 import type { EmailProvider } from "./types";
 
 export * from "./types";
 export { FakeProvider } from "./fake.provider";
-export { clearMicrosoftTokenCache, MicrosoftGraphProvider } from "./microsoft-graph.provider";
+export {
+  clearMicrosoftTokenCache,
+  MicrosoftGraphProvider,
+  permissionsFromToken,
+} from "./microsoft-graph.provider";
 
 /** What a connection document must contain (clientSecretEnc must be selected with "+clientSecretEnc"). */
 export type ConnectionForProvider = {
@@ -17,8 +22,17 @@ export type ConnectionForProvider = {
   tenantId?: string | null;
   clientId?: string | null;
   clientSecretEnc?: string | null;
+  sendFormat?: string | null;
   updatedAt?: Date;
 };
+
+/** The connection's send format; connections saved before the setting existed use the default (outlook). */
+export function sendFormatOf(
+  connection: { sendFormat?: string | null } | null | undefined,
+): SendFormat {
+  const value = connection?.sendFormat;
+  return SEND_FORMATS.includes(value as SendFormat) ? (value as SendFormat) : DEFAULT_SEND_FORMAT;
+}
 
 export type SendingMode = "dry-run" | "live" | "disabled";
 
@@ -50,19 +64,26 @@ function microsoftProvider(connection: ConnectionForProvider): MicrosoftGraphPro
       clientSecret: decrypt(connection.clientSecretEnc),
     },
     cacheKey,
+    { sendFormat: sendFormatOf(connection) },
   );
 }
 
 /**
  * The provider to SEND with. FakeProvider whenever DRY_RUN=true (BUILD_PLAN section 7).
  * Throws SENDING_DISABLED when real sending is switched off.
+ * Both use the connection's send format (outlook / mime).
  */
 export function getProvider(
   connection: ConnectionForProvider,
   options: { fakeFailureRate?: number } = {},
 ): EmailProvider {
   const mode = sendingMode();
-  if (mode === "dry-run") return new FakeProvider({ failureRate: options.fakeFailureRate });
+  if (mode === "dry-run") {
+    return new FakeProvider({
+      failureRate: options.fakeFailureRate,
+      sendFormat: sendFormatOf(connection),
+    });
+  }
   if (mode === "disabled") {
     throw new ApiError(
       409,

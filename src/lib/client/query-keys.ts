@@ -48,5 +48,6 @@ export const queryKeys = {
     messages: (id: string, params: ListParams & { status?: string; search?: string }) =>
       ["campaigns", "messages", id, params] as const,
     preview: (id: string, input: object) => ["campaigns", "preview", id, input] as const,
+    readiness: (id: string) => ["campaigns", "readiness", id] as const,
   },
 };

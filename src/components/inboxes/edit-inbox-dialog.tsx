@@ -15,7 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { errorMessage } from "@/lib/client/api";
 import { createInboxSchema, type InboxDTO } from "@/shared/inbox";
@@ -25,6 +25,8 @@ import { useUpdateInbox } from "./use-inboxes";
 const formSchema = z
   .object({
     displayName: z.string().trim().max(100),
+    senderName: z.string().trim().max(100),
+    senderRole: z.string().trim().max(100),
     providerConnectionId: createInboxSchema.shape.providerConnectionId,
     dailyLimit: createInboxSchema.shape.dailyLimit.unwrap(),
     minGapSeconds: createInboxSchema.shape.minGapSeconds.unwrap(),
@@ -53,6 +55,8 @@ export function EditInboxDialog({
     values: inbox
       ? {
           displayName: inbox.displayName,
+          senderName: inbox.senderName,
+          senderRole: inbox.senderRole,
           providerConnectionId: inbox.providerConnectionId ?? "",
           dailyLimit: inbox.dailyLimit,
           minGapSeconds: inbox.minGapSeconds,
@@ -84,8 +88,35 @@ export function EditInboxDialog({
             <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="edit-inbox-name">Display name</FieldLabel>
-                <Input id="edit-inbox-name" {...form.register("displayName")} />
+                <Input
+                  id="edit-inbox-name"
+                  placeholder="e.g. Your Name from Your Company"
+                  {...form.register("displayName")}
+                />
+                <FieldDescription>What people see as the sender in their inbox.</FieldDescription>
               </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field>
+                  <FieldLabel htmlFor="edit-inbox-sender-name">Signature name</FieldLabel>
+                  <Input
+                    id="edit-inbox-sender-name"
+                    placeholder="e.g. Your Name"
+                    {...form.register("senderName")}
+                  />
+                  <FieldDescription>
+                    {"{{senderName}}"} — empty uses the display name.
+                  </FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="edit-inbox-sender-role">Signature role</FieldLabel>
+                  <Input
+                    id="edit-inbox-sender-role"
+                    placeholder="e.g. Your Role"
+                    {...form.register("senderRole")}
+                  />
+                  <FieldDescription>{"{{senderRole}}"} in the signature.</FieldDescription>
+                </Field>
+              </div>
               <Field data-invalid={!!errors.providerConnectionId}>
                 <FieldLabel htmlFor="edit-inbox-provider">Send through</FieldLabel>
                 <Controller

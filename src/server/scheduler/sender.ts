@@ -11,9 +11,12 @@ import {
   Suppression,
   type MessageDoc,
 } from "@/server/db/models";
+import { campaignTemplates, composeEmail } from "@/server/lib/compose";
+import { isValidEmail } from "@/server/lib/email";
 import { createLogger } from "@/server/lib/logger";
-import { renderEmail } from "@/server/lib/template";
+import { domainAcceptsEmail } from "@/server/lib/mx-check";
 import { getProvider, sendingMode, ProviderError } from "@/server/providers";
+import { autoPauseCampaign } from "@/server/services/campaign.service";
 import { logEvent } from "@/server/services/event.service";
 import { releaseScheduledMessages } from "@/server/services/queue.service";
 import { getTimezone } from "@/server/services/settings.service";
@@ -27,6 +30,8 @@ const log = createLogger("sender");
 export const SEND_LOCK_MS = 2 * 60 * 1000;
 /** An inbox that fails this many times in a row is paused automatically. */
 export const AUTO_PAUSE_AFTER_FAILURES = 5;
+/** A campaign whose emails fail this many times in a row is paused automatically (stop-on-error). */
+export const CAMPAIGN_PAUSE_AFTER_FAILURES = 3;
 /** Safety cap on how many messages one tick may claim. */
 const MAX_CLAIMS_PER_TICK = 50;
 
@@ -161,8 +166,55 @@ async function processMessage(message: MessageRecord, now: Date, tz: string): Pr
     return "released";
   }
 
-  // ---- Render + send ----
-  const email = renderEmail(campaign, contact ?? { email: message.toEmail });
+  // ---- Follow-up: only if the first email was not answered and did not bounce ----
+  let inReplyTo: string | null = null;
+  let parentProviderMessageId: string | null = null;
+  let originalSubject: string | null = null;
+  if (message.parentMessageId) {
+    const parent = await Message.findById(message.parentMessageId)
+      .select("repliedAt bounce internetMessageId providerMessageId renderedSubject")
+      .lean();
+    const reason = followUpBlockReason(parent);
+    if (reason) return skip(message, campaign.name, reason);
+    inReplyTo = parent?.internetMessageId ?? null;
+    parentProviderMessageId = parent?.providerMessageId ?? null;
+    originalSubject = parent?.renderedSubject ?? null;
+  }
+
+  // ---- Is the address usable? (format always; MX only before a real send) ----
+  const domainPart = message.toEmail.slice(message.toEmail.lastIndexOf("@") + 1);
+  if (!isValidEmail(message.toEmail)) {
+    return skip(message, campaign.name, {
+      code: "INVALID_EMAIL",
+      message: "Not a valid email address",
+    });
+  }
+  if (mode === "live" && !(await domainAcceptsEmail(domainPart))) {
+    return skip(message, campaign.name, {
+      code: "NO_MX",
+      message: `The domain ${domainPart} has no mail server (no MX record), so the email would bounce`,
+    });
+  }
+
+  // ---- Render: never send "Hi ," — a contact missing a used field is skipped and logged ----
+  const templates = campaignTemplates(campaign);
+  const template = templates[message.variantIndex ?? 0] ?? templates[0];
+  const { rendered, input } = composeEmail({
+    template,
+    contact: contact ?? { email: message.toEmail },
+    inbox,
+    to: message.toEmail,
+    inReplyTo,
+    parentProviderMessageId,
+    originalSubject,
+  });
+  if (rendered.missing.length > 0) {
+    return skip(message, campaign.name, {
+      code: "MISSING_FIELDS",
+      message: `Not sent: ${rendered.missing.map((name) => `{{${name}}}`).join(", ")} empty for this contact`,
+    });
+  }
+
   let provider;
   try {
     provider = getProvider(
@@ -181,16 +233,19 @@ async function processMessage(message: MessageRecord, now: Date, tz: string): Pr
   }
 
   let providerMessageId: string | null = null;
+  let internetMessageId = input.messageId ?? null;
+  let sendFormat = "mime";
+  let threaded = false;
   try {
-    const sent = await provider.send({
-      from: inbox.email,
-      fromName: inbox.displayName || undefined,
-      to: message.toEmail,
-      subject: email.subject,
-      text: email.text,
-      html: email.html ?? undefined,
-    });
+    const sent = await provider.send(input);
     providerMessageId = sent.providerMessageId ?? null;
+    sendFormat = sent.format ?? "mime";
+    threaded = sent.threaded === true;
+    // Outlook format: Microsoft made the Message-ID; the mailbox tick reads it from Sent Items later.
+    internetMessageId =
+      sendFormat === "outlook"
+        ? (sent.internetMessageId ?? null)
+        : (sent.internetMessageId ?? internetMessageId);
   } catch (err) {
     if (err instanceof ProviderError) return handleProviderError(message, inbox, err, now);
     // We do not know whether the email left. Never retry automatically: a human checks the Sent folder.
@@ -202,19 +257,29 @@ async function processMessage(message: MessageRecord, now: Date, tz: string): Pr
 
   // ---- Success ----
   const sentAt = new Date();
+  // An Outlook-format reply gets Microsoft's subject: "RE: <first email's subject>".
+  const subject = threaded && originalSubject ? `RE: ${originalSubject}` : rendered.subject;
+  const notThreaded =
+    message.parentMessageId && sendFormat === "outlook" && !threaded
+      ? " (as a new email: the first email was not found in Sent Items, so it is not in the same thread)"
+      : "";
   // Inbox first: the planner must see the new lastSentAt as soon as the slot frees up (gap rule).
   await Inbox.updateOne(
     { _id: inbox._id },
     { $set: { lastSentAt: sentAt, consecutiveFailures: 0 } },
   );
+  await Campaign.updateOne({ _id: campaign._id }, { $set: { consecutiveFailures: 0 } });
   const done = await Message.findOneAndUpdate(
     { _id: message._id, status: "sending" },
     {
       $set: {
         status: "sent",
         sentAt,
-        renderedSubject: email.subject,
+        renderedSubject: subject,
+        templateName: template.name,
         providerMessageId,
+        internetMessageId,
+        sendFormat,
         lockedUntil: null,
         error: null,
       },
@@ -224,12 +289,19 @@ async function processMessage(message: MessageRecord, now: Date, tz: string): Pr
     log.error(`message ${String(message._id)} was no longer 'sending' after a successful send`);
     return "failed";
   }
-  await logEvent("message.sent", `Sent to ${message.toEmail} from ${inbox.email}`, {
-    campaignId: message.campaignId,
-    inboxId: inbox._id,
-    messageId: message._id,
-    domainId: inbox.domainId,
-  });
+  log.info(
+    `sent (${sendFormat}): campaign="${campaign.name}" template="${template.name}" to=${message.toEmail} from=${inbox.email}${notThreaded}`,
+  );
+  await logEvent(
+    "message.sent",
+    `Sent to ${message.toEmail} from ${inbox.email} — campaign "${campaign.name}", template "${template.name}"${notThreaded}`,
+    {
+      campaignId: message.campaignId,
+      inboxId: inbox._id,
+      messageId: message._id,
+      domainId: inbox.domainId,
+    },
+  );
   return "sent";
 }
 
@@ -240,7 +312,42 @@ type InboxRecord = {
   providerConnectionId?: Types.ObjectId | null;
 };
 
-/** sending → failed, plus the inbox failure counter. */
+/** A follow-up must not go out when the first email got a reply or bounced. */
+function followUpBlockReason(
+  parent: { repliedAt?: Date | null; bounce?: { code?: string | null } | null } | null,
+): { code: string; message: string } | null {
+  if (!parent)
+    return { code: "NO_FIRST_EMAIL", message: "The first email of this follow-up is missing" };
+  if (parent.repliedAt)
+    return { code: "REPLIED", message: "The contact replied to the first email" };
+  if (parent.bounce?.code) {
+    return { code: "BOUNCED", message: `The first email bounced (${parent.bounce.code})` };
+  }
+  return null;
+}
+
+/** sending → skipped (nothing was sent), with the reason in the message and the activity log. */
+async function skip(
+  message: MessageRecord,
+  campaignName: string,
+  reason: { code: string; message: string },
+): Promise<Outcome> {
+  await Message.findOneAndUpdate(
+    { _id: message._id, status: "sending" },
+    { $set: { status: "skipped", lockedUntil: null, error: reason } },
+  );
+  log.warn(
+    `skipped: campaign="${campaignName}" to=${message.toEmail} ${reason.code}: ${reason.message}`,
+  );
+  await logEvent(
+    "message.skipped",
+    `Skipped ${message.toEmail} (campaign "${campaignName}"): ${reason.message}`,
+    { campaignId: message.campaignId, messageId: message._id },
+  );
+  return "skipped";
+}
+
+/** sending → failed, plus the inbox and campaign failure counters. */
 async function fail(
   message: MessageRecord,
   inbox: InboxRecord,
@@ -251,13 +358,38 @@ async function fail(
     { _id: message._id, status: "sending" },
     { $set: { status: "failed", lockedUntil: null, error } },
   );
-  await logEvent("message.failed", `Failed to send to ${message.toEmail}: ${error.code}`, {
-    campaignId: message.campaignId,
-    inboxId: inbox._id,
-    messageId: message._id,
-  });
-  if (options.countAgainstInbox !== false) await recordInboxFailure(inbox);
+  log.error(`failed: to=${message.toEmail} from=${inbox.email} ${error.code}: ${error.message}`);
+  await logEvent(
+    "message.failed",
+    `Failed to send to ${message.toEmail}: ${error.code} — ${error.message}`,
+    {
+      campaignId: message.campaignId,
+      inboxId: inbox._id,
+      messageId: message._id,
+    },
+  );
+  if (options.countAgainstInbox !== false) {
+    await recordInboxFailure(inbox);
+    await recordCampaignFailure(message.campaignId, error);
+  }
   return "failed";
+}
+
+/** +1 failed send in a row for the campaign; at 3 the whole campaign pauses itself (stop-on-error). */
+async function recordCampaignFailure(
+  campaignId: Types.ObjectId,
+  error: { code: string; message: string },
+) {
+  const updated = await Campaign.findOneAndUpdate(
+    { _id: campaignId },
+    { $inc: { consecutiveFailures: 1 } },
+    { returnDocument: "after" },
+  );
+  if (!updated || updated.consecutiveFailures < CAMPAIGN_PAUSE_AFTER_FAILURES) return;
+  await autoPauseCampaign(
+    campaignId,
+    `Paused automatically: ${CAMPAIGN_PAUSE_AFTER_FAILURES} emails in a row failed (last error ${error.code}: ${error.message})`,
+  );
 }
 
 async function handleProviderError(

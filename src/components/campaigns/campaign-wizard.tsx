@@ -24,7 +24,8 @@ import {
   useStartCampaign,
   useUpdateCampaign,
 } from "./use-campaigns";
-import { formFromCampaign, type WizardForm } from "./wizard-form";
+import { useLiveReadiness } from "./use-readiness";
+import { emailFields, formFromCampaign, formTemplates, type WizardForm } from "./wizard-form";
 import { WizardStepBasics } from "./wizard-step-basics";
 import { WizardStepEmail } from "./wizard-step-email";
 import { WizardStepInboxes } from "./wizard-step-inboxes";
@@ -38,12 +39,20 @@ type Step = 0 | 1 | 2 | 3 | 4;
 function stepError(step: Step, form: WizardForm): string | null {
   if (step === 0) {
     if (!form.name.trim()) return "Enter a campaign name";
-    if (!form.listId) return "Choose a contact list";
+    if (!form.listId)
+      return form.followUpOf ? "Choose the first campaign" : "Choose a contact list";
   }
   if (step === 1 && form.inboxIds.length === 0) return "Choose at least one inbox";
   if (step === 2) {
     if (!form.subjectTemplate.trim()) return "Write a subject";
     if (!form.bodyTemplate.trim()) return "Write the email";
+    for (const [i, v] of form.variants.entries()) {
+      const label = v.name.trim() || `Version ${i + 2}`;
+      if (!v.name.trim()) return `Give ${label} a name`;
+      if (!v.subjectTemplate.trim() || !v.bodyTemplate.trim()) {
+        return `${label} needs a subject and an email`;
+      }
+    }
   }
   if (step === 3) {
     const check = sendWindowSchema.safeParse(form.sendWindow);
@@ -68,6 +77,9 @@ export function CampaignWizard({ campaign }: { campaign?: CampaignDTO }) {
   const create = useCreateCampaign();
   const update = useUpdateCampaign();
   const start = useStartCampaign();
+  // The server refuses Start with "Must fix" problems too; this only keeps the button honest.
+  const live = useLiveReadiness(campaignId, formTemplates(form), form.followUpOf !== null);
+  const mustFix = [...live.content, ...live.setup].filter((i) => i.level === "error").length;
 
   const status = saved.data?.status ?? campaign?.status ?? "draft";
   const isDraft = status === "draft";
@@ -77,17 +89,29 @@ export function CampaignWizard({ campaign }: { campaign?: CampaignDTO }) {
   /** Saves the fields of one step. Step 1 creates the draft the first time. */
   async function saveStep(s: Step) {
     if (s === 0 && !campaignId) {
-      const created = await create.mutateAsync({ name: form.name, listId: form.listId! });
+      const created = await create.mutateAsync({
+        name: form.name,
+        listId: form.listId!,
+        followUpOf: form.followUpOf,
+        followUpAfterDays: form.followUpAfterDays,
+      });
       setCampaignId(created.id);
+      // A follow-up takes the list and inboxes of its first campaign.
+      patch({ listId: created.listId, inboxIds: created.inboxIds });
       // Same URL as "edit", so a page refresh keeps working on this draft.
       window.history.replaceState(null, "", `/campaigns/${created.id}/edit`);
       return;
     }
     if (!campaignId) return;
+    const isFollowUp = !!form.followUpOf;
     const fields: Record<Step, UpdateCampaignInput> = {
-      0: { name: form.name, ...(isDraft ? { listId: form.listId! } : {}) },
-      1: { inboxIds: form.inboxIds },
-      2: { subjectTemplate: form.subjectTemplate, bodyTemplate: form.bodyTemplate },
+      0: {
+        name: form.name,
+        ...(isDraft && !isFollowUp ? { listId: form.listId! } : {}),
+        ...(isFollowUp ? { followUpAfterDays: form.followUpAfterDays } : {}),
+      },
+      1: isFollowUp ? {} : { inboxIds: form.inboxIds },
+      2: emailFields(form),
       3: { sendWindow: form.sendWindow },
       4: {},
     };
@@ -108,14 +132,15 @@ export function CampaignWizard({ campaign }: { campaign?: CampaignDTO }) {
   /** Saves whatever is valid so far and goes back to the campaigns list. */
   async function saveAndExit() {
     try {
+      const isFollowUp = !!form.followUpOf;
       if (!campaignId) {
         if (form.name.trim() && form.listId) {
           await create.mutateAsync({
             name: form.name,
             listId: form.listId,
             inboxIds: form.inboxIds,
-            subjectTemplate: form.subjectTemplate,
-            bodyTemplate: form.bodyTemplate,
+            followUpOf: form.followUpOf,
+            ...emailFields(form),
           });
           toast.success("Draft saved");
         }
@@ -123,10 +148,9 @@ export function CampaignWizard({ campaign }: { campaign?: CampaignDTO }) {
         await update.mutateAsync({
           id: campaignId,
           ...(form.name.trim() ? { name: form.name } : {}),
-          ...(isDraft && form.listId ? { listId: form.listId } : {}),
-          inboxIds: form.inboxIds,
-          subjectTemplate: form.subjectTemplate,
-          bodyTemplate: form.bodyTemplate,
+          ...(isDraft && form.listId && !isFollowUp ? { listId: form.listId } : {}),
+          ...(isFollowUp ? {} : { inboxIds: form.inboxIds }),
+          ...emailFields(form),
           ...(sendWindowSchema.safeParse(form.sendWindow).success
             ? { sendWindow: form.sendWindow }
             : {}),
@@ -184,15 +208,32 @@ export function CampaignWizard({ campaign }: { campaign?: CampaignDTO }) {
       </ol>
 
       <div>
-        {step === 0 && <WizardStepBasics form={form} onChange={patch} listLocked={!isDraft} />}
-        {step === 1 && <WizardStepInboxes form={form} onChange={patch} />}
+        {step === 0 && (
+          <WizardStepBasics
+            form={form}
+            onChange={patch}
+            listLocked={!isDraft}
+            typeLocked={!!campaignId}
+          />
+        )}
+        {step === 1 &&
+          (form.followUpOf ? (
+            <p className="max-w-xl rounded-lg border p-4 text-sm text-muted-foreground">
+              A follow-up is always sent from the inbox that sent the first email, so it stays in
+              the same conversation. Its inboxes are the first campaign’s inboxes.
+            </p>
+          ) : (
+            <WizardStepInboxes form={form} onChange={patch} />
+          ))}
         {step === 2 && campaignId && (
           <WizardStepEmail campaignId={campaignId} form={form} onChange={patch} />
         )}
         {step === 3 && (
           <WizardStepWindow form={form} onChange={patch} timezone={stats.data?.timezone ?? null} />
         )}
-        {step === 4 && <WizardStepReview campaign={saved.data} form={form} />}
+        {step === 4 && (
+          <WizardStepReview campaign={saved.data} form={form} onEditEmail={() => setStep(2)} />
+        )}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
@@ -217,7 +258,14 @@ export function CampaignWizard({ campaign }: { campaign?: CampaignDTO }) {
           ) : isDraft ? (
             <Button
               onClick={() => setConfirmStart(true)}
-              disabled={busy || !stats.data || stats.data.usableInboxes === 0 || sendable === 0}
+              disabled={
+                busy ||
+                !stats.data ||
+                stats.data.usableInboxes === 0 ||
+                sendable === 0 ||
+                mustFix > 0
+              }
+              title={mustFix > 0 ? "Fix the red items in the readiness list first" : undefined}
             >
               <PlayIcon />
               Start campaign
@@ -235,8 +283,10 @@ export function CampaignWizard({ campaign }: { campaign?: CampaignDTO }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Start “{form.name}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              {sendable.toLocaleString()} email{sendable === 1 ? "" : "s"} will be queued. The
-              background worker sends them one by one inside the send window. You can pause the
+              {form.followUpOf
+                ? `Each person who got the first email gets this follow-up ${form.followUpAfterDays} days later, unless they replied or it bounced.`
+                : `${sendable.toLocaleString()} email${sendable === 1 ? "" : "s"} will be queued.`}{" "}
+              The background worker sends them one by one inside the send window. You can pause the
               campaign at any time.
             </AlertDialogDescription>
           </AlertDialogHeader>

@@ -21,15 +21,15 @@ describe("inbox limits (Phase 3 rules)", () => {
     expect(ok({ dailyLimit: 2.5 })).toBe(false);
   });
 
-  it("minGapSeconds must be at least 30", () => {
-    expect(ok({ minGapSeconds: 30, maxGapSeconds: 60 })).toBe(true);
-    expect(ok({ minGapSeconds: 29, maxGapSeconds: 60 })).toBe(false);
+  it("minGapSeconds must be at least 120 (2 minutes, never a burst)", () => {
+    expect(ok({ minGapSeconds: 120, maxGapSeconds: 300 })).toBe(true);
+    expect(ok({ minGapSeconds: 119, maxGapSeconds: 300 })).toBe(false);
   });
 
   it("maxGapSeconds must be >= minGapSeconds", () => {
-    expect(ok({ minGapSeconds: 60, maxGapSeconds: 60 })).toBe(true);
-    expect(ok({ minGapSeconds: 90, maxGapSeconds: 60 })).toBe(false);
-    expect(updateInboxSchema.safeParse({ minGapSeconds: 90, maxGapSeconds: 60 }).success).toBe(
+    expect(ok({ minGapSeconds: 180, maxGapSeconds: 180 })).toBe(true);
+    expect(ok({ minGapSeconds: 300, maxGapSeconds: 180 })).toBe(false);
+    expect(updateInboxSchema.safeParse({ minGapSeconds: 300, maxGapSeconds: 180 }).success).toBe(
       false,
     );
   });

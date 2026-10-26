@@ -69,9 +69,9 @@ describe("createInbox", () => {
     });
   });
 
-  it("uses the BUILD_PLAN defaults when there are no settings (30/day, 480–900 s)", async () => {
+  it("uses the defaults when there are no settings (10/day warm-up, 480–900 s)", async () => {
     const inbox = await createInbox(base());
-    expect(inbox).toMatchObject({ dailyLimit: 30, minGapSeconds: 480, maxGapSeconds: 900 });
+    expect(inbox).toMatchObject({ dailyLimit: 10, minGapSeconds: 480, maxGapSeconds: 900 });
   });
 
   it("requires the email to match the domain", async () => {

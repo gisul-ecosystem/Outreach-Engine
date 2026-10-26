@@ -269,6 +269,8 @@ describe("senderTick", () => {
       let now = NOW;
       for (let i = 0; i < 5; i++) {
         await Inbox.updateOne({ _id: inboxId }, { $set: { lastSentAt: null } });
+        // Keep the campaign's own stop-on-error (3 in a row) out of this inbox-level test.
+        await Campaign.updateOne({ _id: world.campaign._id }, { $set: { consecutiveFailures: 0 } });
         await plannerTick(now);
         await senderTick(now);
         now = new Date(now.getTime() + 1000);

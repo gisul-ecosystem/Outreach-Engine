@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { createLogger } from "@/server/lib/logger";
+import { newMessageId } from "@/server/lib/mime";
 import {
   ProviderError,
   type CheckResult,
   type EmailProvider,
   type MailboxInfo,
+  type ReceivedEmail,
+  type SendFormat,
   type SendInput,
+  type SendResult,
 } from "./types";
 
 const log = createLogger("fake-provider");
@@ -14,6 +18,7 @@ const log = createLogger("fake-provider");
  * Used whenever DRY_RUN=true: NOTHING is really sent.
  * Waits 200–800 ms like a real API, logs the email, and fails ~3% of the time with a
  * transient error so retries can be tested (BUILD_PLAN section 7).
+ * Takes the same input as the real provider and logs which format it would have used.
  */
 export class FakeProvider implements EmailProvider {
   constructor(
@@ -22,6 +27,7 @@ export class FakeProvider implements EmailProvider {
       minDelayMs?: number;
       maxDelayMs?: number;
       random?: () => number;
+      sendFormat?: SendFormat;
     } = {},
   ) {}
 
@@ -52,7 +58,12 @@ export class FakeProvider implements EmailProvider {
     }));
   }
 
-  async send(input: SendInput) {
+  /** Nothing is really sent in a dry run, so nothing ever comes back. */
+  async listReceivedEmails(): Promise<ReceivedEmail[]> {
+    return [];
+  }
+
+  async send(input: SendInput): Promise<SendResult> {
     await this.delay();
     if (this.random() < (this.options.failureRate ?? 0.03)) {
       log.warn(`[DRY RUN] simulated temporary failure sending to ${input.to}`);
@@ -61,9 +72,24 @@ export class FakeProvider implements EmailProvider {
       });
     }
     const providerMessageId = `fake-${randomUUID()}`;
+    const format = this.options.sendFormat ?? "mime";
+    const threaded = format === "outlook" && !!(input.inReplyTo || input.parentProviderMessageId);
+    const how =
+      format === "outlook"
+        ? `Outlook format (JSON${threaded ? ", reply in the first email's thread" : ""})`
+        : "MIME format";
     log.info(
-      `[DRY RUN] not really sent: from=${input.from} to=${input.to} subject="${input.subject}" id=${providerMessageId}`,
+      `[DRY RUN] not really sent (${how}): from=${input.from} to=${input.to} subject="${input.subject}" id=${providerMessageId}`,
     );
-    return { providerMessageId };
+    return {
+      providerMessageId,
+      // Outlook format: in a real send Microsoft makes the Message-ID; here a pretend one is made.
+      internetMessageId:
+        format === "outlook"
+          ? newMessageId(input.from)
+          : (input.messageId ?? newMessageId(input.from)),
+      format,
+      ...(format === "outlook" ? { threaded } : {}),
+    };
   }
 }

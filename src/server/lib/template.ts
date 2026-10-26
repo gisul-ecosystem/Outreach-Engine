@@ -1,15 +1,17 @@
 // Email template renderer (pure: no database, no I/O).
 //
-//   {{firstName}}            → the contact's first name
+//   {{firstName}}            → the contact's first name ({{first_name}} works too)
 //   {{firstName|there}}      → the first name, or "there" when it is empty
 //   {{custom.city}}          → a custom CSV column (key as shown on the Contacts page)
+//   {{senderName}}           → the sending inbox's signature name ({{senderRole}}, {{senderEmail}})
+//   {{originalSubject}}      → in a follow-up: the subject of the first email
 //
-// Unknown variables and empty values without a fallback become "" and produce a warning,
-// so the preview can show what would look wrong before anything is sent.
-import { STANDARD_VARIABLES } from "@/shared/campaign";
+// Unknown variables and empty values without a fallback become "" and are reported in `missing`
+// (and as a warning), so the sender can skip that contact instead of sending "Hi ,".
+import { SENDER_VARIABLES, STANDARD_VARIABLES } from "@/shared/campaign";
 import { customKey } from "@/shared/contact";
 
-export { STANDARD_VARIABLES };
+export { SENDER_VARIABLES, STANDARD_VARIABLES };
 
 export type TemplateContact = {
   email: string;
@@ -20,12 +22,26 @@ export type TemplateContact = {
   custom?: Map<string, string> | Record<string, string> | null;
 };
 
-export type RenderResult = { output: string; warnings: string[] };
+/**
+ * The sending context: the inbox fills {{senderName}}, {{senderRole}}, {{senderEmail}};
+ * for a follow-up, {{originalSubject}} is the subject of the first email in the thread.
+ */
+export type TemplateSender = {
+  name?: string | null;
+  role?: string | null;
+  email?: string | null;
+  originalSubject?: string | null;
+};
+
+export type RenderResult = { output: string; warnings: string[]; missing: string[] };
 
 // {{ name }} or {{ name | fallback }} — no braces inside.
 const VARIABLE = /\{\{\s*([^{}|]*?)\s*(?:\|([^{}]*))?\}\}/g;
 
-const standardByLowerCase = new Map(STANDARD_VARIABLES.map((v) => [v.toLowerCase(), v]));
+/** "first_name", "First Name" and "firstName" all mean the same variable. */
+const squash = (name: string) => name.toLowerCase().replace(/[\s_-]/g, "");
+const standardByName = new Map(STANDARD_VARIABLES.map((v) => [squash(v), v]));
+const senderByName = new Map(SENDER_VARIABLES.map((v) => [squash(v), v]));
 
 export function escapeHtml(value: string): string {
   return value
@@ -40,9 +56,20 @@ type Lookup =
   | { kind: "known"; value: string } // value may be "" (known variable, empty for this contact)
   | { kind: "unknown" };
 
-function lookup(name: string, contact: TemplateContact): Lookup {
-  const standard = standardByLowerCase.get(name.toLowerCase());
+function lookup(name: string, contact: TemplateContact, sender: TemplateSender): Lookup {
+  const standard = standardByName.get(squash(name));
   if (standard) return { kind: "known", value: (contact[standard] ?? "").trim() };
+
+  const senderField = senderByName.get(squash(name));
+  if (senderField) {
+    const value = {
+      senderName: sender.name,
+      senderRole: sender.role,
+      senderEmail: sender.email,
+      originalSubject: sender.originalSubject,
+    }[senderField];
+    return { kind: "known", value: (value ?? "").trim() };
+  }
 
   if (name.toLowerCase().startsWith("custom.")) {
     const raw = name.slice("custom.".length);
@@ -64,14 +91,15 @@ function lookup(name: string, contact: TemplateContact): Lookup {
 export function renderTemplate(
   template: string,
   contact: TemplateContact,
-  options: { html?: boolean } = {},
+  options: { html?: boolean; sender?: TemplateSender } = {},
 ): RenderResult {
   const warnings = new Set<string>();
+  const missing = new Set<string>();
   const output = template.replace(VARIABLE, (match, rawName: string, rawFallback?: string) => {
     const name = rawName.trim();
     const hasFallback = rawFallback !== undefined;
     const fallback = (rawFallback ?? "").trim();
-    const found = lookup(name, contact);
+    const found = lookup(name, contact, options.sender ?? {});
 
     let value: string;
     if (found.kind === "unknown") {
@@ -80,6 +108,7 @@ export function renderTemplate(
           ? `{{${name}}} is not a known variable${hasFallback ? ` — "${fallback}" is used instead` : " — it will be left empty"}`
           : `${match} is an empty variable — it will be left empty`,
       );
+      if (!hasFallback) missing.add(name || match);
       value = fallback;
     } else if (found.value) {
       value = found.value;
@@ -88,12 +117,13 @@ export function renderTemplate(
         warnings.add(
           `{{${name}}} is empty for ${contact.email} — add a fallback like {{${name}|…}}`,
         );
+        missing.add(name);
       }
       value = fallback;
     }
     return options.html ? escapeHtml(value) : value;
   });
-  return { output, warnings: [...warnings] };
+  return { output, warnings: [...warnings], missing: [...missing] };
 }
 
 /** Variable names used in a template, in order of first appearance, without duplicates. */
@@ -106,30 +136,40 @@ export function listVariables(template: string): string[] {
   return [...names];
 }
 
-/** True for names the renderer understands (standard fields and custom.<key>). */
+/** True for names the renderer understands (standard fields, sender fields and custom.<key>). */
 export function isKnownVariable(name: string): boolean {
   return (
-    standardByLowerCase.has(name.toLowerCase()) ||
+    standardByName.has(squash(name)) ||
+    senderByName.has(squash(name)) ||
     (name.toLowerCase().startsWith("custom.") && name.length > "custom.".length)
   );
 }
+
+export type EmailTemplate = {
+  subjectTemplate: string;
+  bodyTemplate: string;
+  bodyHtml?: string | null;
+};
 
 export type RenderedEmail = {
   subject: string;
   text: string;
   html: string | null;
   warnings: string[];
+  /** Variables that came out empty (no value, no fallback). Non-empty → do NOT send this email. */
+  missing: string[];
 };
 
 /** Renders subject, plain-text body and (optional) HTML body for one contact. */
 export function renderEmail(
-  templates: { subjectTemplate: string; bodyTemplate: string; bodyHtml?: string | null },
+  templates: EmailTemplate,
   contact: TemplateContact,
+  sender: TemplateSender = {},
 ): RenderedEmail {
-  const subject = renderTemplate(templates.subjectTemplate, contact);
-  const text = renderTemplate(templates.bodyTemplate, contact);
+  const subject = renderTemplate(templates.subjectTemplate, contact, { sender });
+  const text = renderTemplate(templates.bodyTemplate, contact, { sender });
   const html = templates.bodyHtml
-    ? renderTemplate(templates.bodyHtml, contact, { html: true })
+    ? renderTemplate(templates.bodyHtml, contact, { html: true, sender })
     : null;
   return {
     // A subject is one line: line breaks from values would break the email header.
@@ -137,5 +177,6 @@ export function renderEmail(
     text: text.output,
     html: html?.output ?? null,
     warnings: [...new Set([...subject.warnings, ...text.warnings, ...(html?.warnings ?? [])])],
+    missing: [...new Set([...subject.missing, ...text.missing, ...(html?.missing ?? [])])],
   };
 }

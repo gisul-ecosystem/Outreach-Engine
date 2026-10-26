@@ -9,9 +9,11 @@ import {
   Message,
   ProviderConnection,
   Suppression,
+  type CampaignDoc,
 } from "@/server/db/models";
 import { createLogger } from "@/server/lib/logger";
 import { sendingMode } from "@/server/providers";
+import { syncFollowUpMessages } from "@/server/services/campaign.service";
 import { logEvent } from "@/server/services/event.service";
 import { getTimezone } from "@/server/services/settings.service";
 import { canInboxSendNow, computeNextSendAt, contactBlockReason, randomGapSeconds } from "./rules";
@@ -47,15 +49,20 @@ export async function plannerTick(now = new Date()): Promise<PlannerResult> {
 }
 
 async function planCampaign(
-  campaign: Lean<{
-    inboxIds: Types.ObjectId[];
-    name: string;
-    sendWindow?: { startMinute: number; endMinute: number; days: number[] } | null;
-  }>,
+  campaign: Lean<
+    CampaignDoc & {
+      inboxIds: Types.ObjectId[];
+      name: string;
+      sendWindow?: { startMinute: number; endMinute: number; days: number[] } | null;
+    }
+  >,
   now: Date,
   tz: string,
   result: PlannerResult,
 ) {
+  // A follow-up campaign gets new messages as people become due (first email ≥ N days ago, no reply).
+  if (campaign.followUpOf) await syncFollowUpMessages(campaign, now);
+
   const window: SendWindow = {
     startMinute: campaign.sendWindow?.startMinute ?? 0,
     endMinute: campaign.sendWindow?.endMinute ?? 0,
@@ -125,15 +132,23 @@ async function planCampaign(
     const nextAt = computeNextSendAt(now, fresh.lastSentAt, gap, window, tz);
     if (!nextAt) continue; // finished for today
 
-    const outcome = await scheduleOneMessage(campaign._id, inbox._id, nextAt, result);
+    const outcome = await scheduleOneMessage(
+      campaign._id,
+      inbox._id,
+      nextAt,
+      result,
+      !!campaign.followUpOf,
+    );
     if (outcome === "scheduled") result.scheduled++;
   }
 
   // Rule 7: nothing pending / scheduled / sending left → the campaign is done.
+  // A follow-up is only done when its first campaign is finished and nobody can still become due.
   const open = await Message.exists({
     campaignId: campaign._id,
     status: { $in: ["pending", "scheduled", "sending"] },
   });
+  if (!open && (await followUpStillWaiting(campaign, now))) return;
   if (!open) {
     const done = await Campaign.findOneAndUpdate(
       { _id: campaign._id, status: "running" },
@@ -148,18 +163,46 @@ async function planCampaign(
   }
 }
 
+/** True while a follow-up campaign may still get new people (its first campaign is not finished yet). */
+async function followUpStillWaiting(
+  campaign: { followUpOf?: Types.ObjectId | null; followUpAfterDays?: number | null },
+  now: Date,
+): Promise<boolean> {
+  if (!campaign.followUpOf) return false;
+  const parent = await Campaign.findById(campaign.followUpOf).select("status deletedAt").lean();
+  if (parent && !parent.deletedAt && parent.status !== "completed") return true;
+  const cutoff = new Date(now.getTime() - (campaign.followUpAfterDays ?? 3) * 24 * 60 * 60 * 1000);
+  // Someone got the first email less than N days ago and has not answered: wait for them.
+  return (
+    (await Message.exists({
+      campaignId: campaign.followUpOf,
+      status: "sent",
+      sentAt: { $gt: cutoff },
+      repliedAt: null,
+      bounce: null,
+    })) !== null
+  );
+}
+
 /**
  * Atomically claims ONE `pending` message of the campaign for this inbox (pending → scheduled).
  * Messages that must not be emailed (suppressed, unsubscribed, bounced, deleted) become `skipped` on the way.
+ * A follow-up only takes messages whose first email came from this inbox (same sender, same thread).
  */
 async function scheduleOneMessage(
   campaignId: Types.ObjectId,
   inboxId: Types.ObjectId,
   scheduledAt: Date,
   result: PlannerResult,
+  isFollowUp = false,
 ): Promise<"scheduled" | "none"> {
+  const filter = {
+    campaignId,
+    status: "pending" as const,
+    ...(isFollowUp ? { parentInboxId: inboxId } : {}),
+  };
   for (let i = 0; i < MAX_SKIPS_PER_INBOX; i++) {
-    const candidate = await Message.findOne({ campaignId, status: "pending" }).lean();
+    const candidate = await Message.findOne(filter).lean();
     if (!candidate) return "none";
 
     const [contact, suppressed] = await Promise.all([

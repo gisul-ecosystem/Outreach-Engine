@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { paginationSchema } from "./common";
-import type { ProviderStatus, ProviderType } from "./enums";
+import {
+  DEFAULT_SEND_FORMAT,
+  SEND_FORMATS,
+  type ProviderStatus,
+  type ProviderType,
+  type SendFormat,
+} from "./enums";
 
 // Microsoft Tenant ID: a GUID or a tenant domain like contoso.onmicrosoft.com
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -23,6 +29,26 @@ const clientSecret = z
   .trim()
   .min(8, "Enter the client secret VALUE (not the secret ID)")
   .max(500, "Client secret is too long");
+const sendFormat = z.enum(SEND_FORMATS, { error: "Choose Outlook or MIME" });
+
+/** Mail.Read (or Mail.ReadWrite, which includes it) lets the engine read bounces, replies and Sent Items. */
+export function hasMailRead(permissions: string[]): boolean {
+  return permissions.some((p) => p === "Mail.Read" || p === "Mail.ReadWrite");
+}
+
+/** Shown next to the "Sending format" choice. */
+export const SEND_FORMAT_LABELS: Record<SendFormat, { label: string; description: string }> = {
+  outlook: {
+    label: "Outlook standard (recommended)",
+    description:
+      "Microsoft builds each email exactly like one typed in Outlook. A follow-up is a real reply in the same conversation.",
+  },
+  mime: {
+    label: "Raw MIME (older way)",
+    description:
+      "The engine builds the whole email itself, with its own Message-ID and an Unsubscribe header.",
+  },
+};
 
 export const createProviderSchema = z.object({
   name,
@@ -33,6 +59,7 @@ export const createProviderSchema = z.object({
   tenantId,
   clientId,
   clientSecret,
+  sendFormat: sendFormat.default(DEFAULT_SEND_FORMAT),
 });
 export type CreateProviderInput = z.input<typeof createProviderSchema>;
 
@@ -57,6 +84,7 @@ export const updateProviderSchema = z
       .transform((v) => (v === "" ? undefined : v))
       .pipe(clientSecret.optional())
       .optional(),
+    sendFormat: sendFormat.optional(),
   })
   .refine((v) => Object.values(v).some((value) => value !== undefined), "Nothing to update");
 export type UpdateProviderInput = z.input<typeof updateProviderSchema>;
@@ -74,6 +102,10 @@ export type ProviderDTO = {
   status: ProviderStatus;
   lastCheckedAt: string | null;
   lastError: string | null;
+  /** How emails are handed to Microsoft. */
+  sendFormat: SendFormat;
+  /** Application permissions Microsoft granted (found at the last Verify); null = not checked yet. */
+  grantedPermissions: string[] | null;
   inboxCount: number;
   createdAt: string;
   updatedAt: string;

@@ -1,5 +1,6 @@
 // Worker entry point: a separate Node process (`npm run worker`), never started from inside Next.js.
-// Runs three repeating ticks (BUILD_PLAN section 6): planner (30 s), sender (10 s), recovery (60 s).
+// Runs repeating ticks (BUILD_PLAN section 6): planner (30 s), sender (10 s), recovery (60 s),
+// plus the mailbox tick (5 min) that finds bounce reports and replies.
 // Only ONE worker may run at a time: it holds a lock in the settings document.
 import { randomUUID } from "node:crypto";
 import { loadEnv } from "@/server/config/load-env";
@@ -7,6 +8,7 @@ import { getEnv } from "@/server/config/env";
 import { connectDB, disconnectDB } from "@/server/db/connect";
 import { createLogger } from "@/server/lib/logger";
 import { sendingMode } from "@/server/providers";
+import { mailboxTick } from "@/server/scheduler/mailbox";
 import { plannerTick } from "@/server/scheduler/planner";
 import { recoveryTick } from "@/server/scheduler/recovery";
 import { senderTick } from "@/server/scheduler/sender";
@@ -22,6 +24,8 @@ const log = createLogger("worker");
 const PLANNER_INTERVAL_MS = 30_000;
 const SENDER_INTERVAL_MS = 10_000;
 const RECOVERY_INTERVAL_MS = 60_000;
+/** Reads each sending inbox for bounce reports and replies. */
+const MAILBOX_INTERVAL_MS = 5 * 60_000;
 /** Finishing an in-progress send can take a moment (real Microsoft calls); after this we exit anyway. */
 const SHUTDOWN_TIMEOUT_MS = 30_000;
 
@@ -93,8 +97,16 @@ async function main() {
       allowOverlap: true,
       run: () => guarded("sender", () => senderTick()),
     }),
+    startTicker({
+      name: "mailbox",
+      intervalMs: MAILBOX_INTERVAL_MS,
+      onError,
+      run: () => guarded("mailbox", () => mailboxTick()),
+    }),
   ];
-  log.info("running (planner 30 s, sender 10 s, recovery 60 s). Press Ctrl+C to stop.");
+  log.info(
+    "running (planner 30 s, sender 10 s, recovery 60 s, bounce/reply check 5 min). Press Ctrl+C to stop.",
+  );
 }
 
 async function shutdown(reason: string, exitCode = 0) {

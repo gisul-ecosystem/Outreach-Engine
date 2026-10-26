@@ -6,7 +6,11 @@ import { deletedAtField, onlyNotDeleted } from "@/server/db/soft-delete";
 const inboxSchema = new Schema(
   {
     email: { type: String, required: true, lowercase: true, trim: true },
+    // What recipients see in "From", e.g. "Name from Company".
     displayName: { type: String, default: "", trim: true },
+    // Signature values for templates: {{senderName}} (falls back to displayName) and {{senderRole}}.
+    senderName: { type: String, default: "", trim: true },
+    senderRole: { type: String, default: "", trim: true },
     domainId: { type: Schema.Types.ObjectId, ref: "Domain", required: true },
     providerConnectionId: { type: Schema.Types.ObjectId, ref: "ProviderConnection", default: null },
     status: { type: String, enum: INBOX_STATUSES, default: "active" },
@@ -16,6 +20,8 @@ const inboxSchema = new Schema(
     maxGapSeconds: { type: Number, default: DEFAULTS.maxGapSeconds, min: 0 },
     lastSentAt: { type: Date, default: null },
     consecutiveFailures: { type: Number, default: 0, min: 0 },
+    // The mailbox reader (bounces + replies) has looked at emails received up to this moment.
+    mailboxCheckedAt: { type: Date, default: null },
     deletedAt: deletedAtField,
   },
   { timestamps: true, collection: "inboxes" },

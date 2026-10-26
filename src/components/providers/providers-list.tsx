@@ -38,7 +38,7 @@ import {
 } from "@/components/ui/table";
 import { errorMessage } from "@/lib/client/api";
 import { formatRelative } from "@/lib/client/format";
-import type { ProviderDTO } from "@/shared/provider";
+import { hasMailRead, type ProviderDTO } from "@/shared/provider";
 import { ProviderFormDialog } from "./provider-form-dialog";
 import { ProviderStatusBadge } from "./provider-status-badge";
 import { SetupGuide } from "./setup-guide";
@@ -116,7 +116,8 @@ export function ProvidersList() {
                         <TableCell className="font-medium">
                           {provider.name}
                           <span className="block text-xs font-normal text-muted-foreground">
-                            Microsoft 365
+                            Microsoft 365 ·{" "}
+                            {provider.sendFormat === "outlook" ? "Outlook format" : "MIME format"}
                           </span>
                         </TableCell>
                         <TableCell>
@@ -126,6 +127,13 @@ export function ProvidersList() {
                               {provider.lastError}
                             </p>
                           )}
+                          {provider.status === "connected" &&
+                            provider.grantedPermissions &&
+                            !hasMailRead(provider.grantedPermissions) && (
+                              <p className="mt-1 max-w-xs text-xs whitespace-normal text-amber-700 dark:text-amber-400">
+                                Mail.Read is missing: bounces and replies are not detected.
+                              </p>
+                            )}
                         </TableCell>
                         <TableCell className="font-mono text-xs">{provider.tenantId}</TableCell>
                         <TableCell className="font-mono text-xs">{provider.clientId}</TableCell>
@@ -187,7 +195,7 @@ export function ProvidersList() {
             <AlertDialogTitle>Delete {toDelete?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
               {toDelete?.inboxCount
-                ? `${toDelete.inboxCount} inbox(es) still use this connection — delete or move them first.`
+                ? `${toDelete.inboxCount} inbox(es) use this connection. They will be paused and stop sending until you edit each one, choose another provider and resume it. Their history and stats are kept.`
                 : "The saved credentials will no longer be used."}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -195,7 +203,7 @@ export function ProvidersList() {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <Button
               variant="destructive"
-              disabled={remove.isPending || !!toDelete?.inboxCount}
+              disabled={remove.isPending}
               onClick={() =>
                 toDelete && remove.mutate(toDelete, { onSuccess: () => setToDelete(null) })
               }

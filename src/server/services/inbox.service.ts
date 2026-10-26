@@ -16,6 +16,7 @@ import {
   ProviderError,
   sendingMode,
   type EmailProvider,
+  type SendInput,
 } from "@/server/providers";
 import { logEvent } from "@/server/services/event.service";
 import { releaseScheduledMessages } from "@/server/services/queue.service";
@@ -42,6 +43,8 @@ function toDTO(
     id: String(inbox._id),
     email: inbox.email,
     displayName: inbox.displayName ?? "",
+    senderName: inbox.senderName ?? "",
+    senderRole: inbox.senderRole ?? "",
     domainId: String(inbox.domainId),
     domainName: names.domains.get(String(inbox.domainId)) ?? emailDomain(inbox.email),
     providerConnectionId: providerId,
@@ -204,6 +207,8 @@ export async function updateInbox(
   id: string,
   input: {
     displayName?: string;
+    senderName?: string;
+    senderRole?: string;
     providerConnectionId?: string;
     dailyLimit?: number;
     minGapSeconds?: number;
@@ -244,6 +249,17 @@ export async function pauseInbox(id: string, reason?: string): Promise<InboxDTO>
 export async function resumeInbox(id: string): Promise<InboxDTO> {
   await connectDB();
   const inbox = await findInboxOr404(id);
+  // An inbox whose provider was deleted has nothing to send through until one is chosen.
+  if (
+    !inbox.providerConnectionId ||
+    !(await ProviderConnection.exists(notDeleted({ _id: inbox.providerConnectionId })))
+  ) {
+    throw new ApiError(
+      400,
+      "NO_PROVIDER",
+      "This inbox has no provider connection. Edit the inbox, choose a provider, then resume it.",
+    );
+  }
   await Inbox.updateOne(
     { _id: inbox._id },
     { $set: { status: "active", pauseReason: null, consecutiveFailures: 0 } },
@@ -269,13 +285,18 @@ export async function deleteInbox(id: string): Promise<{ id: string }> {
 }
 
 /**
- * Sends one test email from this inbox.
+ * Sends one test email from this inbox (a short standard text, or `email` — e.g. a campaign's email).
  * DRY_RUN=true → FakeProvider (logged, not sent). Real only when DRY_RUN=false AND SENDING_ENABLED=true.
  */
 export async function testSendFromInbox(
   id: string,
   to: string,
-  options: { provider?: EmailProvider } = {},
+  options: {
+    provider?: EmailProvider;
+    email?: Pick<SendInput, "subject" | "text" | "html" | "messageId" | "listUnsubscribe">;
+    /** Logged with the event (a campaign's test). */
+    campaignId?: Types.ObjectId;
+  } = {},
 ): Promise<TestSendResult> {
   await connectDB();
   const inbox = await findInboxOr404(id);
@@ -302,24 +323,28 @@ export async function testSendFromInbox(
       from: inbox.email,
       fromName: inbox.displayName || undefined,
       to,
-      subject: "Test email from Outreach Engine",
-      text: [
-        "Hello,",
-        "",
-        `This is a test email sent from ${inbox.email} by Outreach Engine.`,
-        "If you received it, this inbox is set up correctly.",
-      ].join("\n"),
+      ...(options.email ?? {
+        subject: "Test email from Outreach Engine",
+        text: [
+          "Hello,",
+          "",
+          `This is a test email sent from ${inbox.email} by Outreach Engine.`,
+          "If you received it, this inbox is set up correctly.",
+        ].join("\n"),
+      }),
     });
+    const format = result.format ?? "mime";
     await logEvent(
       "inbox.test_sent",
-      `Test email ${mode === "dry-run" ? "simulated (dry run)" : "sent"} from ${inbox.email} to ${to}`,
-      { inboxId: inbox._id, domainId: inbox.domainId },
+      `Test email ${mode === "dry-run" ? "simulated (dry run)" : "sent"} from ${inbox.email} to ${to} (${format === "outlook" ? "Outlook" : "MIME"} format)`,
+      { inboxId: inbox._id, domainId: inbox.domainId, campaignId: options.campaignId },
     );
     return {
       mode: mode === "dry-run" ? "dry-run" : "live",
       to,
       from: inbox.email,
       providerMessageId: result.providerMessageId ?? null,
+      format,
     };
   } catch (err) {
     if (err instanceof ProviderError) {

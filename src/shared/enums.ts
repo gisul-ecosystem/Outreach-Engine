@@ -10,6 +10,15 @@ export type ProviderType = (typeof PROVIDER_TYPES)[number];
 export const PROVIDER_STATUSES = ["connected", "error", "unchecked"] as const;
 export type ProviderStatus = (typeof PROVIDER_STATUSES)[number];
 
+/**
+ * How emails are handed to Microsoft (set per provider connection):
+ * - outlook: JSON — Microsoft builds the email exactly like Outlook does (default)
+ * - mime:    the engine builds the raw email itself (the older way)
+ */
+export const SEND_FORMATS = ["outlook", "mime"] as const;
+export type SendFormat = (typeof SEND_FORMATS)[number];
+export const DEFAULT_SEND_FORMAT: SendFormat = "outlook";
+
 export const DOMAIN_STATUSES = ["active", "paused"] as const;
 export type DomainStatus = (typeof DOMAIN_STATUSES)[number];
 
@@ -41,7 +50,8 @@ export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
 /** Defaults from BUILD_PLAN section 4 / 11. */
 export const DEFAULTS = {
   timezone: "Asia/Kolkata",
-  dailyLimit: 30,
+  /** Warm-up for a new domain (was 30). Raise it slowly per inbox once emails are delivered fine. */
+  dailyLimit: 10,
   minGapSeconds: 480,
   maxGapSeconds: 900,
   /** Mon–Fri 10:00–18:00 (minutes after midnight, days 1 = Monday … 7 = Sunday) */

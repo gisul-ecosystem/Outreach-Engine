@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(\\(Get-CimInstance Win32_Service -Filter \"Name='MongoDB'\"\\) | Select-Object PathName,ExitCode,State | Format-List; Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='MongoDB'} -MaxEvents 5 -ErrorAction SilentlyContinue | Format-List TimeCreated,Message; Get-WinEvent -FilterHashtable @{LogName='System'; Id=7031,7034,7000,7009,7036} -MaxEvents 30 -ErrorAction SilentlyContinue | Where-Object Message -match 'MongoDB' | Select-Object -First 5 | Format-List TimeCreated,Message)",
+      "PowerShell(Get-Content \"C:\\\\Program Files\\\\MongoDB\\\\Server\\\\8.0\\\\log\\\\mongod.log\" -Tail 400 | Select-String -Pattern '\"s\":\"\\(E|F|W\\)\"|Fatal|shutdown|Shutting|terminate|signal' | Select-Object -Last 25 | ForEach-Object { $_.Line.Substring\\(0, [Math]::Min\\(400, $_.Line.Length\\)\\) })",
+      "PowerShell(Get-PSDrive -PSProvider FileSystem | Select-Object Name,@{n='FreeGB';e={[math]::Round\\($_.Free/1GB,2\\)}},@{n='UsedGB';e={[math]::Round\\($_.Used/1GB,2\\)}}; \"{0:N2} MB data dir\" -f \\(\\(Get-ChildItem \"C:\\\\Program Files\\\\MongoDB\\\\Server\\\\8.0\\\\data\" -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum\\).Sum/1MB\\); \"{0:N2} MB log\" -f \\(\\(Get-Item \"C:\\\\Program Files\\\\MongoDB\\\\Server\\\\8.0\\\\log\\\\mongod.log\"\\).Length/1MB\\))",
+      "PowerShell(try { Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile','-Command','Start-Service MongoDB' -ErrorAction Stop; \"elevated call done\" } catch { \"ERR: $\\($_.Exception.Message\\)\" }; Get-Service MongoDB | Select-Object Name,Status)"
+    ]
+  }
+}

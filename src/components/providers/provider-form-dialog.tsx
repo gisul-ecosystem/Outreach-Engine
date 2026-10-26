@@ -1,8 +1,9 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
+import { SimpleSelect } from "@/components/common/simple-select";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,9 +16,11 @@ import {
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { errorMessage } from "@/lib/client/api";
+import { DEFAULT_SEND_FORMAT, SEND_FORMATS, type SendFormat } from "@/shared/enums";
 import {
   createProviderSchema,
   editProviderFormSchema,
+  SEND_FORMAT_LABELS,
   type CreateProviderInput,
   type ProviderDTO,
 } from "@/shared/provider";
@@ -49,10 +52,13 @@ export function ProviderFormDialog({
       tenantId: provider?.tenantId ?? "",
       clientId: provider?.clientId ?? "",
       clientSecret: "",
+      sendFormat: provider?.sendFormat ?? DEFAULT_SEND_FORMAT,
     },
   });
   const { errors } = form.formState;
   const pending = create.isPending || update.isPending;
+  const sendFormat = (useWatch({ control: form.control, name: "sendFormat" }) ??
+    DEFAULT_SEND_FORMAT) as SendFormat;
 
   const close = () => {
     onOpenChange(false);
@@ -68,6 +74,7 @@ export function ProviderFormDialog({
             tenantId: values.tenantId,
             clientId: values.clientId,
             clientSecret: values.clientSecret || undefined,
+            sendFormat: values.sendFormat,
           })
         : await create.mutateAsync(values);
       toast.success(`${saved.name} saved. Verifying with Microsoft…`);
@@ -132,6 +139,20 @@ export function ProviderFormDialog({
                 The secret <strong>Value</strong>, not the Secret ID.
               </FieldDescription>
               <FieldError errors={[errors.clientSecret]} />
+            </Field>
+            <Field>
+              <FieldLabel>Sending format</FieldLabel>
+              <SimpleSelect
+                value={sendFormat}
+                onChange={(value) =>
+                  form.setValue("sendFormat", value as SendFormat, { shouldDirty: true })
+                }
+                options={SEND_FORMATS.map((f) => ({
+                  value: f,
+                  label: SEND_FORMAT_LABELS[f].label,
+                }))}
+              />
+              <FieldDescription>{SEND_FORMAT_LABELS[sendFormat].description}</FieldDescription>
             </Field>
           </FieldGroup>
           <DialogFooter>

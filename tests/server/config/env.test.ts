@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseEnv } from "@/server/config/env";
 
 const valid = {
-  MONGODB_URI: "mongodb://localhost:27018/outreach",
+  MONGODB_URI: "mongodb://localhost:27017/outreach",
   APP_URL: "http://localhost:3000",
   JWT_SECRET: "x".repeat(32),
   ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),

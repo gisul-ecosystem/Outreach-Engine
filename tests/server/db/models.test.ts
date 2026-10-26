@@ -73,9 +73,9 @@ describe("inboxes", () => {
     await expect(Inbox.create({ email: "sales@tryracko.in", domainId })).resolves.toBeTruthy();
   });
 
-  it("applies sending defaults (30/day, 480–900 s gaps)", async () => {
+  it("applies sending defaults (10/day warm-up, 480–900 s gaps)", async () => {
     const inbox = await Inbox.create({ email: "a@tryracko.in", domainId: new Types.ObjectId() });
-    expect(inbox.dailyLimit).toBe(30);
+    expect(inbox.dailyLimit).toBe(10);
     expect(inbox.minGapSeconds).toBe(480);
     expect(inbox.maxGapSeconds).toBe(900);
     expect(inbox.consecutiveFailures).toBe(0);
@@ -170,7 +170,7 @@ describe("other models", () => {
   it("settings defaults match the build plan", async () => {
     const settings = await Settings.create({});
     expect(settings.timezone).toBe("Asia/Kolkata");
-    expect(settings.defaultDailyLimit).toBe(30);
+    expect(settings.defaultDailyLimit).toBe(10);
     expect(settings.defaultMinGapSeconds).toBe(480);
     expect(settings.defaultMaxGapSeconds).toBe(900);
   });
