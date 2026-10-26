@@ -2,6 +2,7 @@
 
 import {
   GlobeIcon,
+  LinkIcon,
   MoreHorizontalIcon,
   PauseIcon,
   PlayIcon,
@@ -35,6 +36,7 @@ import { AddDomainDialog } from "./add-domain-dialog";
 import { DeleteDomainDialog } from "./delete-domain-dialog";
 import { DnsBadge } from "./dns-badge";
 import { DomainStatusBadge } from "./domain-status-badge";
+import { TrackingHostDialog } from "./tracking-host-dialog";
 import { useCheckDns, useDomains, useUpdateDomain } from "./use-domains";
 
 const PAGE_SIZE = 20;
@@ -43,6 +45,7 @@ const DNS_CHECKS = ["spf", "dkim", "dmarc", "mx"] as const;
 export function DomainsTable() {
   const [page, setPage] = useState(1);
   const [toDelete, setToDelete] = useState<DomainDTO | null>(null);
+  const [trackingFor, setTrackingFor] = useState<DomainDTO | null>(null);
   const domains = useDomains({ page, limit: PAGE_SIZE });
   const checkDns = useCheckDns();
   const updateDomain = useUpdateDomain();
@@ -81,6 +84,7 @@ export function DomainsTable() {
                 <TableHead>Domain</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>DNS</TableHead>
+                <TableHead>Tracking address</TableHead>
                 <TableHead className="text-right">Inboxes</TableHead>
                 <TableHead>Last checked</TableHead>
                 <TableHead className="w-12">
@@ -92,7 +96,7 @@ export function DomainsTable() {
               {domains.isPending
                 ? Array.from({ length: 3 }, (_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: 6 }, (_, j) => (
+                      {Array.from({ length: 7 }, (_, j) => (
                         <TableCell key={j}>
                           <Skeleton className="h-5 w-full max-w-32" />
                         </TableCell>
@@ -118,6 +122,20 @@ export function DomainsTable() {
                               />
                             ))}
                           </div>
+                        </TableCell>
+                        <TableCell>
+                          {domain.trackingHost ? (
+                            <span className="font-mono text-xs">{domain.trackingHost}</span>
+                          ) : (
+                            <Button
+                              variant="link"
+                              size="sm"
+                              className="h-auto p-0 text-muted-foreground"
+                              onClick={() => setTrackingFor(domain)}
+                            >
+                              Set up
+                            </Button>
+                          )}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {domain.inboxCount}
@@ -151,6 +169,10 @@ export function DomainsTable() {
                               >
                                 <RefreshCwIcon />
                                 Re-check DNS
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => setTrackingFor(domain)}>
+                                <LinkIcon />
+                                Tracking address
                               </DropdownMenuItem>
                               {domain.status === "active" ? (
                                 <DropdownMenuItem
@@ -215,6 +237,7 @@ export function DomainsTable() {
       )}
 
       <DeleteDomainDialog domain={toDelete} onClose={() => setToDelete(null)} />
+      <TrackingHostDialog domain={trackingFor} onClose={() => setTrackingFor(null)} />
     </div>
   );
 }

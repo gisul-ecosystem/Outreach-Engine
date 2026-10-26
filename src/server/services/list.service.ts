@@ -17,6 +17,8 @@ function toDTO(list: ListRecord, contactCount: number): ListDTO {
     name: list.name,
     description: list.description ?? "",
     contactCount,
+    linkDestinationUrl: list.linkDestinationUrl ?? null,
+    linkDomainId: list.linkDomainId ? String(list.linkDomainId) : null,
     createdAt: list.createdAt.toISOString(),
     updatedAt: list.updatedAt.toISOString(),
   };

@@ -52,6 +52,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiClientError, errorMessage } from "@/lib/client/api";
 import { formatRelative } from "@/lib/client/format";
 import { createListSchema, type CreateListInput, type ListDTO } from "@/shared/list";
+import { DownloadLinksDialog } from "./download-links-dialog";
 import { useCreateList, useDeleteList, useLists, useUpdateList } from "./use-contacts";
 
 export function ListsTab() {
@@ -60,6 +61,7 @@ export function ListsTab() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ListDTO | null>(null);
   const [toDelete, setToDelete] = useState<ListDTO | null>(null);
+  const [linksFor, setLinksFor] = useState<ListDTO | null>(null);
 
   const openForm = (list: ListDTO | null) => {
     setEditing(list);
@@ -134,18 +136,7 @@ export function ListsTab() {
                               <PencilIcon />
                               Edit
                             </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => {
-                                // A temporary download link: the browser saves the file (our login cookie goes with it).
-                                const a = document.createElement("a");
-                                a.href = `/api/lists/${list.id}/links.csv`;
-                                a.download = "";
-                                a.click();
-                                toast.success(
-                                  "Downloading one tracking link per contact (missing links are created).",
-                                );
-                              }}
-                            >
+                            <DropdownMenuItem onClick={() => setLinksFor(list)}>
                               <DownloadIcon />
                               Download links (CSV)
                             </DropdownMenuItem>
@@ -168,6 +159,7 @@ export function ListsTab() {
       )}
 
       <ListFormDialog open={formOpen} onOpenChange={setFormOpen} list={editing} />
+      <DownloadLinksDialog list={linksFor} onClose={() => setLinksFor(null)} />
 
       <AlertDialog open={!!toDelete} onOpenChange={(open) => !open && setToDelete(null)}>
         <AlertDialogContent>

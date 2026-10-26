@@ -143,6 +143,44 @@ describe("updateDomain", () => {
   });
 });
 
+describe("tracking address", () => {
+  it("sets and removes the tracking address (the domain itself or a subdomain of it)", async () => {
+    const domain = await createDomain({ name: "tryracko.in" }, { resolver: emptyResolver });
+    expect(domain.trackingHost).toBeNull();
+
+    expect((await updateDomain(domain.id, { trackingHost: "go.tryracko.in" })).trackingHost).toBe(
+      "go.tryracko.in",
+    );
+    expect((await updateDomain(domain.id, { trackingHost: "tryracko.in" })).trackingHost).toBe(
+      "tryracko.in",
+    );
+    expect((await updateDomain(domain.id, { trackingHost: null })).trackingHost).toBeNull();
+    expect(await Event.countDocuments({ type: "domain.tracking_host" })).toBe(3);
+  });
+
+  it.each(["go.getracko.ai", "tryracko.in.evil.com", "eviltryracko.in"])(
+    "refuses an address that is not on the domain: %s",
+    async (trackingHost) => {
+      const domain = await createDomain({ name: "tryracko.in" }, { resolver: emptyResolver });
+      await expect(updateDomain(domain.id, { trackingHost })).rejects.toMatchObject({
+        status: 400,
+        code: "TRACKING_HOST_NOT_ON_DOMAIN",
+      });
+    },
+  );
+
+  it("renaming drops an address that no longer belongs to the domain", async () => {
+    const domain = await createDomain({ name: "typo-racko.in" }, { resolver: emptyResolver });
+    await updateDomain(domain.id, { trackingHost: "go.typo-racko.in" });
+    const renamed = await updateDomain(
+      domain.id,
+      { name: "tryracko.in" },
+      { resolver: emptyResolver },
+    );
+    expect(renamed.trackingHost).toBeNull();
+  });
+});
+
 describe("deleteDomain", () => {
   it("soft-deletes the domain and its inboxes, keeps the history", async () => {
     const domain = await createDomain({ name: "tryracko.in" }, { resolver: emptyResolver });

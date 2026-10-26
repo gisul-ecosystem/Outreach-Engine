@@ -108,6 +108,18 @@ export const importConfirmFieldsSchema = z.object({
     .pipe(columnMappingSchema),
 });
 
+/** What the import did about tracking links (null = no links were asked for). */
+export type ImportLinksReport = {
+  /** Links made now (contacts that already had this link keep it). */
+  created: number;
+  /** Contacts in the list that now have a link. */
+  total: number;
+  destinationUrl: string;
+  /** Start of the links, e.g. https://go.tryracko.in */
+  baseUrl: string;
+  domainId: string | null;
+};
+
 export type ImportPreview = {
   columns: string[];
   rows: Record<string, string>[];
@@ -126,6 +138,7 @@ export type ImportReport = {
   suppressed: number;
   /** First invalid rows (row numbers as in the spreadsheet, header = row 1). */
   invalidRows: InvalidRow[];
+  links: ImportLinksReport | null;
 };
 
 export const MAX_IMPORT_BYTES = 5 * 1024 * 1024;

@@ -260,5 +260,6 @@ export async function confirmImport(
     invalid: parsed.invalid,
     suppressed: result.suppressed,
     invalidRows: parsed.invalidRows,
+    links: null, // link.service importWithLinks fills this in when links were asked for
   };
 }

@@ -1,9 +1,17 @@
 "use client";
 
-import { CheckCircle2Icon, FileUpIcon, UploadIcon } from "lucide-react";
+import { CheckCircle2Icon, DownloadIcon, FileUpIcon, LinkIcon, UploadIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { SimpleSelect } from "@/components/common/simple-select";
+import {
+  destinationOf,
+  EMPTY_LINK_TARGET,
+  LinkTargetFields,
+  type LinkTarget,
+} from "@/components/tracking/link-target-fields";
+import { LocalLinksBanner } from "@/components/tracking/local-links-banner";
+import { useTrackingConfig } from "@/components/tracking/use-tracking";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,7 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -23,7 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { errorMessage } from "@/lib/client/api";
+import { apiDownload, errorMessage } from "@/lib/client/api";
 import { cn } from "@/lib/utils";
 import {
   COLUMN_TARGETS,
@@ -38,7 +46,7 @@ import {
 import { isValidEmail, normalizeEmail } from "@/shared/email";
 import { useCreateList, useImportConfirm, useImportPreview, useLists } from "./use-contacts";
 
-const STEPS = ["Upload", "Map columns", "Preview", "Choose list", "Result"] as const;
+const STEPS = ["Upload", "Map columns", "Preview", "List & links", "Result"] as const;
 type Step = 0 | 1 | 2 | 3 | 4;
 
 const TARGET_OPTIONS = COLUMN_TARGETS.map((t) => ({ value: t, label: FIELD_LABELS[t] }));
@@ -57,9 +65,13 @@ export function ImportWizard({
   const [listMode, setListMode] = useState<"existing" | "new">("existing");
   const [listId, setListId] = useState<string | null>(null);
   const [newListName, setNewListName] = useState("");
-  const [report, setReport] = useState<ImportReport | null>(null);
+  const [makeLinks, setMakeLinks] = useState(true);
+  const [linkTarget, setLinkTarget] = useState<LinkTarget>(EMPTY_LINK_TARGET);
+  const [report, setReport] = useState<{ listId: string; result: ImportReport } | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
   const lists = useLists();
+  const trackingConfig = useTrackingConfig();
   const previewMutation = useImportPreview();
   const confirmMutation = useImportConfirm();
   const createList = useCreateList();
@@ -76,6 +88,8 @@ export function ImportWizard({
     setListMode("existing");
     setListId(null);
     setNewListName("");
+    setMakeLinks(true);
+    setLinkTarget(EMPTY_LINK_TARGET);
     setReport(null);
   }
 
@@ -109,13 +123,46 @@ export function ImportWizard({
         targetListId = created.id;
       }
       if (!targetListId) return;
-      setReport(await confirmMutation.mutateAsync({ file, mapping, listId: targetListId }));
+      const links =
+        makeLinks && homepage
+          ? {
+              destinationUrl: destinationOf(linkTarget.path, homepage),
+              domainId: linkTarget.domainId,
+            }
+          : undefined;
+      const result = await confirmMutation.mutateAsync({
+        file,
+        mapping,
+        listId: targetListId,
+        links,
+      });
+      setReport({ listId: targetListId, result });
       setStep(4);
     } catch (err) {
       toast.error(errorMessage(err));
     }
   }
 
+  /** The list's links CSV, with exactly the links made during this import. */
+  async function downloadLinks() {
+    const links = report?.result.links;
+    if (!report || !links) return;
+    setDownloading(true);
+    try {
+      const query = new URLSearchParams({
+        destinationUrl: links.destinationUrl,
+        ...(links.domainId ? { domainId: links.domainId } : {}),
+      });
+      const filename = await apiDownload(`/api/lists/${report.listId}/links.csv?${query}`);
+      toast.success(`Saved ${filename}`);
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  const homepage = trackingConfig.data?.homepage ?? "";
   const importing = confirmMutation.isPending || createList.isPending;
   const listReady = listMode === "existing" ? !!listId : newListName.trim().length > 0;
 
@@ -281,11 +328,39 @@ export function ImportWizard({
               Contacts that already exist are not duplicated — they are added to this list and only
               empty fields are filled. Emails on the suppression list are marked and never emailed.
             </FieldDescription>
+
+            <div className="grid gap-4 rounded-lg border p-4">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={makeLinks}
+                  onChange={(e) => setMakeLinks(e.target.checked)}
+                  className="size-4"
+                />
+                <LinkIcon className="size-4" />
+                Make a tracking link for every contact
+              </label>
+              {makeLinks && <LocalLinksBanner />}
+              {makeLinks && (
+                <FieldGroup>
+                  <LinkTargetFields
+                    id="import-links"
+                    value={linkTarget}
+                    onChange={setLinkTarget}
+                    config={trackingConfig.data}
+                  />
+                </FieldGroup>
+              )}
+            </div>
+
             <DialogFooter>
               <Button variant="outline" onClick={() => setStep(2)}>
                 Back
               </Button>
-              <Button onClick={runImport} disabled={!listReady || importing}>
+              <Button
+                onClick={runImport}
+                disabled={!listReady || importing || (makeLinks && !homepage)}
+              >
                 {importing ? "Importing…" : `Import ${preview?.totalRows.toLocaleString()} rows`}
               </Button>
             </DialogFooter>
@@ -301,12 +376,12 @@ export function ImportWizard({
             <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {(
                 [
-                  ["Rows in file", report.total],
-                  ["New contacts", report.created],
-                  ["Updated (already existed)", report.updated],
-                  ["Duplicates in file", report.duplicatesInFile],
-                  ["Invalid (skipped)", report.invalid],
-                  ["On suppression list", report.suppressed],
+                  ["Rows in file", report.result.total],
+                  ["New contacts", report.result.created],
+                  ["Updated (already existed)", report.result.updated],
+                  ["Duplicates in file", report.result.duplicatesInFile],
+                  ["Invalid (skipped)", report.result.invalid],
+                  ["On suppression list", report.result.suppressed],
                 ] as const
               ).map(([label, value]) => (
                 <div key={label} className="rounded-lg border p-3">
@@ -315,13 +390,30 @@ export function ImportWizard({
                 </div>
               ))}
             </dl>
-            {report.invalidRows.length > 0 && (
+            {report.result.links && (
+              <div className="grid gap-3 rounded-lg border p-4 text-sm">
+                <div className="flex items-center gap-2 font-medium">
+                  <LinkIcon className="size-4" />
+                  {report.result.links.total.toLocaleString()} contact(s) in the list have a
+                  tracking link ({report.result.links.created.toLocaleString()} new)
+                </div>
+                <p className="font-mono text-xs break-all text-muted-foreground">
+                  {report.result.links.baseUrl}/r/… → {report.result.links.destinationUrl}
+                </p>
+                <Button className="w-fit" onClick={downloadLinks} disabled={downloading}>
+                  <DownloadIcon />
+                  {downloading ? "Preparing…" : "Download links (CSV)"}
+                </Button>
+              </div>
+            )}
+            {report.result.invalidRows.length > 0 && (
               <div className="grid gap-2">
                 <p className="text-sm font-medium">
-                  Invalid rows{report.invalid > report.invalidRows.length ? " (first 100)" : ""}
+                  Invalid rows
+                  {report.result.invalid > report.result.invalidRows.length ? " (first 100)" : ""}
                 </p>
                 <div className="max-h-48 overflow-y-auto rounded-lg border text-sm">
-                  {report.invalidRows.map((row) => (
+                  {report.result.invalidRows.map((row) => (
                     <div key={row.row} className="flex gap-3 border-b px-3 py-1.5 last:border-0">
                       <span className="w-16 text-muted-foreground">Row {row.row}</span>
                       <span className="flex-1 truncate font-mono">{row.email || "(empty)"}</span>

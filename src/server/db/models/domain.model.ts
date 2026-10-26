@@ -23,6 +23,11 @@ const domainSchema = new Schema(
       },
       checkedAt: { type: Date, default: null },
     },
+    /**
+     * Host of the tracking links for emails sent from this domain, e.g. "go.tryracko.in"
+     * (the domain itself or one of its subdomains). null = links use TRACKING_BASE_URL.
+     */
+    trackingHost: { type: String, default: null, lowercase: true, trim: true },
     deletedAt: deletedAtField,
   },
   { timestamps: true, collection: "domains" },

@@ -1,17 +1,21 @@
-// Tracking links for hand-written emails: one link per contact per destination (reused when copied
-// again; "new" makes a fresh one), the CSV of a list's links, the click list and a contact's timeline.
+// Tracking links for hand-written emails: one link per contact per destination per link host (reused
+// when copied again; "new" makes a fresh one), the CSV of a list's links (also made while importing),
+// the click list and a contact's timeline.
+// A link made for a sending domain gets that domain's tracking address (https://go.tryracko.in/r/…),
+// so the link's domain matches the email's; otherwise TRACKING_BASE_URL.
 import Papa from "papaparse";
 import { Types } from "mongoose";
 import { getEnv } from "@/server/config/env";
 import { connectDB } from "@/server/db/connect";
-import { Contact, LinkClick, TrackedEmail, TrackedLink } from "@/server/db/models";
+import { Contact, Domain, LinkClick, List, TrackedEmail, TrackedLink } from "@/server/db/models";
 import { notDeleted } from "@/server/db/soft-delete";
 import { ApiError } from "@/server/lib/errors";
-import { findContactOr404 } from "@/server/services/contact.service";
+import { confirmImport, findContactOr404 } from "@/server/services/contact.service";
 import { findListOr404 } from "@/server/services/list.service";
 import { allowedDestination } from "@/server/tracking/destination";
 import { linkUrl, newToken } from "@/server/tracking/token";
 import type { Paginated } from "@/shared/common";
+import type { ColumnMapping, ImportReport } from "@/shared/contact";
 import type { ClickVerdict, TrackedEmailSource } from "@/shared/enums";
 import type {
   ClickFilter,
@@ -20,6 +24,7 @@ import type {
   TimelineItemDTO,
   TrackedLinkDTO,
   TrackingConfigDTO,
+  TrackingDomainDTO,
 } from "@/shared/tracking";
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
@@ -30,6 +35,7 @@ type LinkRecord = {
   _id: Types.ObjectId;
   token: string;
   destinationUrl: string;
+  trackingHost?: string | null;
   label?: string | null;
   sentEmailIds: Types.ObjectId[];
   firstSentAt?: Date | null;
@@ -41,16 +47,34 @@ type LinkRecord = {
   createdAt: Date;
 };
 
-export function trackingConfig(): TrackingConfigDTO {
+/** Start of a link: `https://<host>` for a domain's tracking address, else TRACKING_BASE_URL. */
+function baseUrlFor(trackingHost: string | null | undefined): string {
+  return trackingHost
+    ? `https://${trackingHost}`
+    : getEnv().TRACKING_BASE_URL.replace(/\/+$/, "");
+}
+
+/** Domains with a tracking address, for the "Sending from" choice. */
+async function trackingDomains(): Promise<TrackingDomainDTO[]> {
+  const domains = await Domain.find(notDeleted({ trackingHost: { $nin: [null, ""] } }))
+    .select("name trackingHost")
+    .sort({ name: 1 })
+    .lean();
+  return domains.map((d) => ({ id: String(d._id), name: d.name, trackingHost: d.trackingHost! }));
+}
+
+export async function trackingConfig(): Promise<TrackingConfigDTO> {
+  await connectDB();
   const env = getEnv();
   const base = new URL(env.TRACKING_BASE_URL);
   return {
-    baseUrl: env.TRACKING_BASE_URL.replace(/\/+$/, ""),
+    baseUrl: baseUrlFor(null),
     isLocal:
       base.protocol !== "https:" ||
       ["localhost", "127.0.0.1", "::1", "[::1]"].includes(base.hostname),
     homepage: env.TRACKING_FALLBACK_URL,
     allowedHosts: env.TRACKING_ALLOWED_HOSTS,
+    domains: await trackingDomains(),
   };
 }
 
@@ -58,7 +82,8 @@ function toDTO(link: LinkRecord): TrackedLinkDTO {
   return {
     id: String(link._id),
     token: link.token,
-    url: linkUrl(getEnv().TRACKING_BASE_URL, link.token),
+    url: linkUrl(baseUrlFor(link.trackingHost), link.token),
+    trackingHost: link.trackingHost ?? null,
     destinationUrl: link.destinationUrl,
     label: link.label ?? "",
     createdAt: link.createdAt.toISOString(),
@@ -86,19 +111,51 @@ function checkedDestination(url: string): string {
   return destination;
 }
 
-/** The contact's newest link to this destination, or a new one (always new when `fresh`). */
+/** Where links lead and which host they get (null = TRACKING_BASE_URL). */
+type LinkTarget = {
+  destinationUrl: string;
+  trackingHost: string | null;
+  domainId: Types.ObjectId | null;
+};
+
+/**
+ * Checks a link choice: the destination must be allowed, and a chosen sending domain must have a
+ * tracking address (its links must be on the email's own domain, never on another one).
+ */
+async function resolveTarget(destinationUrl: string, domainId?: string): Promise<LinkTarget> {
+  const destination = checkedDestination(destinationUrl);
+  if (!domainId) return { destinationUrl: destination, trackingHost: null, domainId: null };
+  const domain = await Domain.findOne(notDeleted({ _id: domainId }))
+    .select("name trackingHost")
+    .lean();
+  if (!domain) throw new ApiError(404, "DOMAIN_NOT_FOUND", "Domain not found");
+  if (!domain.trackingHost) {
+    throw new ApiError(
+      400,
+      "TRACKING_HOST_NOT_SET",
+      `${domain.name} has no tracking address yet. Set one on the Domains page (e.g. go.${domain.name}).`,
+    );
+  }
+  return { destinationUrl: destination, trackingHost: domain.trackingHost, domainId: domain._id };
+}
+
+/** The contact's newest link to this destination on this host, or a new one (always new when `fresh`). */
 export async function getOrCreateLink(
   contactId: string,
-  input: { destinationUrl: string; label: string; new: boolean },
+  input: { destinationUrl: string; domainId?: string; label: string; new: boolean },
 ): Promise<TrackedLinkDTO> {
   await connectDB();
   const contact = await findContactOr404(contactId);
-  const destinationUrl = checkedDestination(input.destinationUrl);
+  const { destinationUrl, trackingHost } = await resolveTarget(
+    input.destinationUrl,
+    input.domainId,
+  );
 
   if (!input.new) {
     const existing = await TrackedLink.findOne({
       contactId: contact._id,
       destinationUrl,
+      trackingHost, // null also matches links made before trackingHost existed
       deletedAt: null,
     })
       .sort({ createdAt: -1 })
@@ -116,6 +173,7 @@ export async function getOrCreateLink(
     token: newToken(),
     contactId: contact._id,
     destinationUrl,
+    trackingHost,
     label: input.label,
   });
   return toDTO(created.toObject() as LinkRecord);
@@ -131,25 +189,17 @@ export async function listContactLinks(contactId: string): Promise<TrackedLinkDT
 }
 
 /**
- * CSV with one link per contact of the list (email, name, company, status, link), creating the
- * missing ones. Cells starting with = + - @ are escaped so a spreadsheet never runs them as formulas.
+ * Makes sure every contact has a link for this target (reusing the newest existing one) and
+ * returns contact id → token, plus how many links were made now.
  */
-export async function listLinksCsv(
-  listId: string,
-  destinationUrl?: string,
-): Promise<{ filename: string; csv: string }> {
-  await connectDB();
-  const list = await findListOr404(listId);
-  const destination = checkedDestination(destinationUrl ?? getEnv().TRACKING_FALLBACK_URL);
-  const contacts = await Contact.find(notDeleted({ listIds: list._id }))
-    .select("email firstName lastName company status")
-    .sort({ email: 1 })
-    .lean();
-
-  const ids = contacts.map((c) => c._id);
+async function ensureLinks(
+  contactIds: Types.ObjectId[],
+  target: LinkTarget,
+): Promise<{ tokenOf: Map<string, string>; created: number }> {
   const existing = await TrackedLink.find({
-    contactId: { $in: ids },
-    destinationUrl: destination,
+    contactId: { $in: contactIds },
+    destinationUrl: target.destinationUrl,
+    trackingHost: target.trackingHost,
     deletedAt: null,
   })
     .sort({ createdAt: -1 })
@@ -159,19 +209,56 @@ export async function listLinksCsv(
   for (const link of existing) {
     if (!tokenOf.has(String(link.contactId))) tokenOf.set(String(link.contactId), link.token);
   }
-  const missing = contacts.filter((c) => !tokenOf.has(String(c._id)));
-  if (missing.length) {
-    const docs = missing.map((c) => ({
+  const docs = contactIds
+    .filter((id) => !tokenOf.has(String(id)))
+    .map((contactId) => ({
       token: newToken(),
-      contactId: c._id,
-      destinationUrl: destination,
+      contactId,
+      destinationUrl: target.destinationUrl,
+      trackingHost: target.trackingHost,
       label: "",
     }));
+  if (docs.length) {
     await TrackedLink.insertMany(docs, { ordered: false });
     for (const d of docs) tokenOf.set(String(d.contactId), d.token);
   }
+  return { tokenOf, created: docs.length };
+}
 
-  const base = getEnv().TRACKING_BASE_URL;
+/** Remembers the list's link choice, so the links download is pre-filled with it next time. */
+async function rememberListTarget(listId: Types.ObjectId, target: LinkTarget) {
+  await List.updateOne(
+    { _id: listId },
+    { $set: { linkDestinationUrl: target.destinationUrl, linkDomainId: target.domainId } },
+  );
+}
+
+/**
+ * CSV with one link per contact of the list (email, name, company, status, link, destination),
+ * creating the missing ones. Cells starting with = + - @ are escaped so a spreadsheet never runs
+ * them as formulas.
+ */
+export async function listLinksCsv(
+  listId: string,
+  options: { destinationUrl?: string; domainId?: string } = {},
+): Promise<{ filename: string; csv: string }> {
+  await connectDB();
+  const list = await findListOr404(listId);
+  const target = await resolveTarget(
+    options.destinationUrl ?? getEnv().TRACKING_FALLBACK_URL,
+    options.domainId,
+  );
+  const contacts = await Contact.find(notDeleted({ listIds: list._id }))
+    .select("email firstName lastName company status")
+    .sort({ email: 1 })
+    .lean();
+  const { tokenOf } = await ensureLinks(
+    contacts.map((c) => c._id),
+    target,
+  );
+  await rememberListTarget(list._id, target);
+
+  const base = baseUrlFor(target.trackingHost);
   const csv = Papa.unparse(
     contacts.map((c) => ({
       email: c.email,
@@ -180,9 +267,10 @@ export async function listLinksCsv(
       company: c.company ?? "",
       status: c.status,
       link: linkUrl(base, tokenOf.get(String(c._id))!),
+      destination: target.destinationUrl,
     })),
     {
-      columns: ["email", "first_name", "last_name", "company", "status", "link"],
+      columns: ["email", "first_name", "last_name", "company", "status", "link", "destination"],
       escapeFormulae: true,
     },
   );
@@ -192,6 +280,37 @@ export async function listLinksCsv(
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "") || "list";
   return { filename: `links-${slug}.csv`, csv };
+}
+
+/**
+ * CSV import that also makes a tracking link for every contact of the list. The link choice is
+ * checked BEFORE importing, so a wrong destination or domain never leaves a half-done import.
+ */
+export async function importWithLinks(
+  csvText: string,
+  mapping: ColumnMapping,
+  listId: string,
+  links?: { destinationUrl: string; domainId?: string },
+): Promise<ImportReport> {
+  await connectDB();
+  const target = links ? await resolveTarget(links.destinationUrl, links.domainId) : null;
+  const report = await confirmImport(csvText, mapping, listId);
+  if (!target) return report;
+
+  const list = await findListOr404(listId);
+  const contactIds = await Contact.find(notDeleted({ listIds: list._id })).distinct("_id");
+  const { created } = await ensureLinks(contactIds, target);
+  await rememberListTarget(list._id, target);
+  return {
+    ...report,
+    links: {
+      created,
+      total: contactIds.length,
+      destinationUrl: target.destinationUrl,
+      baseUrl: baseUrlFor(target.trackingHost),
+      domainId: target.domainId ? String(target.domainId) : null,
+    },
+  };
 }
 
 const VERDICTS_FOR: Record<ClickFilter, ClickVerdict[]> = {

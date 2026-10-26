@@ -1,7 +1,7 @@
 import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
 import { deletedAtField } from "@/server/db/soft-delete";
 
-// One tracking link per contact per destination: https://go.racko.ai/r/<token> → destinationUrl.
+// One tracking link per contact per destination per link host: https://go.racko.ai/r/<token> → destinationUrl.
 // The counters are kept here so lists stay fast; `npm run tracking:rebuild` recalculates them from linkClicks.
 const trackedLinkSchema = new Schema(
   {
@@ -10,6 +10,12 @@ const trackedLinkSchema = new Schema(
     contactId: { type: Schema.Types.ObjectId, ref: "Contact", required: true },
     /** Where the link leads (https, host on TRACKING_ALLOWED_HOSTS — checked again at every click). */
     destinationUrl: { type: String, required: true },
+    /**
+     * Host the link was made for, e.g. "go.tryracko.in" (a sending domain's tracking address), so the
+     * link's domain matches the email's. null = TRACKING_BASE_URL (and every link made before this field).
+     * Clicks are found by token only, so any host that reaches the engine works.
+     */
+    trackingHost: { type: String, default: null },
     /** The words shown for the link when it is pasted into Outlook, e.g. "take a look at Racko". */
     label: { type: String, default: "", trim: true },
     /** Hand-sent emails (trackedEmails) this link was found in. */

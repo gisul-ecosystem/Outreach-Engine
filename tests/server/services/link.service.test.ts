@@ -1,10 +1,11 @@
 import { Types } from "mongoose";
 import Papa from "papaparse";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { Contact, LinkClick, List, TrackedEmail, TrackedLink } from "@/server/db/models";
+import { Contact, Domain, LinkClick, List, TrackedEmail, TrackedLink } from "@/server/db/models";
 import {
   getContactTimeline,
   getOrCreateLink,
+  importWithLinks,
   listClicks,
   listContactLinks,
   listLinksCsv,
@@ -114,9 +115,157 @@ describe("listLinksCsv", () => {
 
   it("refuses a destination that is not allowed", async () => {
     const list = await List.create({ name: "L" });
-    await expect(listLinksCsv(String(list._id), "https://evil.com")).rejects.toMatchObject({
-      status: 400,
+    await expect(
+      listLinksCsv(String(list._id), { destinationUrl: "https://evil.com" }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("uses the chosen destination + sending domain, and remembers the choice on the list", async () => {
+    const list = await List.create({ name: "L" });
+    await Contact.create({ email: "a@x.com", listIds: [list._id] });
+    const domain = await Domain.create({ name: "tryracko.in", trackingHost: "go.tryracko.in" });
+
+    const { csv } = await listLinksCsv(String(list._id), {
+      destinationUrl: "https://racko.ai/pricing",
+      domainId: String(domain._id),
     });
+    const [row] = Papa.parse<Record<string, string>>(csv, { header: true }).data;
+    expect(row.link).toMatch(/^https:\/\/go\.tryracko\.in\/r\/[A-Za-z0-9_-]{12}$/);
+    expect(row.destination).toBe("https://racko.ai/pricing");
+
+    const saved = await List.findById(list._id).lean();
+    expect(saved).toMatchObject({ linkDestinationUrl: "https://racko.ai/pricing" });
+    expect(String(saved!.linkDomainId)).toBe(String(domain._id));
+
+    // Same choice again → the same links.
+    const again = await listLinksCsv(String(list._id), {
+      destinationUrl: "https://racko.ai/pricing",
+      domainId: String(domain._id),
+    });
+    expect(again.csv).toBe(csv);
+  });
+});
+
+describe("links for a sending domain", () => {
+  it("get the domain's tracking address, separate from the default links", async () => {
+    const c = await contact();
+    const domain = await Domain.create({ name: "tryracko.in", trackingHost: "go.tryracko.in" });
+    const id = String(c._id);
+
+    const plain = await getOrCreateLink(id, { destinationUrl: HOME, label: "", new: false });
+    const forDomain = await getOrCreateLink(id, {
+      destinationUrl: HOME,
+      domainId: String(domain._id),
+      label: "",
+      new: false,
+    });
+    expect(plain.url).toBe(`http://localhost:3000/r/${plain.token}`);
+    expect(forDomain.url).toBe(`https://go.tryracko.in/r/${forDomain.token}`);
+    expect(forDomain.trackingHost).toBe("go.tryracko.in");
+    expect(forDomain.token).not.toBe(plain.token);
+
+    // Each is reused for its own domain.
+    const again = await getOrCreateLink(id, {
+      destinationUrl: HOME,
+      domainId: String(domain._id),
+      label: "",
+      new: false,
+    });
+    expect(again.id).toBe(forDomain.id);
+    expect((await getOrCreateLink(id, { destinationUrl: HOME, label: "", new: false })).id).toBe(
+      plain.id,
+    );
+  });
+
+  it("refuses a domain without a tracking address (the link would not match the email)", async () => {
+    const c = await contact();
+    const domain = await Domain.create({ name: "userako.in" });
+    await expect(
+      getOrCreateLink(String(c._id), {
+        destinationUrl: HOME,
+        domainId: String(domain._id),
+        label: "",
+        new: false,
+      }),
+    ).rejects.toMatchObject({ status: 400, code: "TRACKING_HOST_NOT_SET" });
+    expect(await TrackedLink.countDocuments()).toBe(0);
+  });
+
+  it("links made before tracking hosts existed are still reused as default links", async () => {
+    const c = await contact();
+    // Written the old way: no trackingHost field at all.
+    await TrackedLink.collection.insertOne({
+      token: "oldToken12345",
+      contactId: c._id,
+      destinationUrl: "https://racko.ai/",
+      label: "",
+      sentEmailIds: [],
+      clickCount: 0,
+      realClickCount: 0,
+      deletedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const link = await getOrCreateLink(String(c._id), {
+      destinationUrl: HOME,
+      label: "",
+      new: false,
+    });
+    expect(link.token).toBe("oldToken12345");
+    expect(link.url).toBe("http://localhost:3000/r/oldToken12345");
+  });
+});
+
+describe("importWithLinks", () => {
+  const CSV = "email,first_name\nann@x.com,Ann\nbob@x.com,Bob\n";
+  const MAPPING = { email: "email", first_name: "firstName" } as const;
+
+  it("imports and makes a link for every contact of the list, to the chosen page and domain", async () => {
+    const list = await List.create({ name: "Import" });
+    const domain = await Domain.create({ name: "getracko.ai", trackingHost: "go.getracko.ai" });
+
+    const report = await importWithLinks(CSV, { ...MAPPING }, String(list._id), {
+      destinationUrl: "https://racko.ai/demo",
+      domainId: String(domain._id),
+    });
+    expect(report.created).toBe(2);
+    expect(report.links).toEqual({
+      created: 2,
+      total: 2,
+      destinationUrl: "https://racko.ai/demo",
+      baseUrl: "https://go.getracko.ai",
+      domainId: String(domain._id),
+    });
+    const links = await TrackedLink.find().lean();
+    expect(links).toHaveLength(2);
+    expect(links.every((l) => l.trackingHost === "go.getracko.ai")).toBe(true);
+
+    // The download afterwards gives exactly these links.
+    const { csv } = await listLinksCsv(String(list._id), {
+      destinationUrl: "https://racko.ai/demo",
+      domainId: String(domain._id),
+    });
+    const tokens = Papa.parse<Record<string, string>>(csv, { header: true }).data.map((r) =>
+      r.link.split("/r/")[1],
+    );
+    expect(tokens.sort()).toEqual(links.map((l) => l.token).sort());
+  });
+
+  it("checks the link choice BEFORE importing: a bad destination imports nothing", async () => {
+    const list = await List.create({ name: "Import" });
+    await expect(
+      importWithLinks(CSV, { ...MAPPING }, String(list._id), {
+        destinationUrl: "https://evil.com",
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(await Contact.countDocuments()).toBe(0);
+  });
+
+  it("without a link choice it is a plain import", async () => {
+    const list = await List.create({ name: "Import" });
+    const report = await importWithLinks(CSV, { ...MAPPING }, String(list._id));
+    expect(report.links).toBeNull();
+    expect(await TrackedLink.countDocuments()).toBe(0);
   });
 });
 
@@ -217,12 +366,26 @@ describe("emails stored before Phase 10 (no tokens / wrongLinks / reply fields)"
 });
 
 describe("trackingConfig", () => {
-  it("says links only work on this computer while the base address is localhost", () => {
-    expect(trackingConfig()).toMatchObject({
+  it("says links only work on this computer while the base address is localhost", async () => {
+    expect(await trackingConfig()).toMatchObject({
       baseUrl: "http://localhost:3000",
       isLocal: true,
       homepage: "https://racko.ai",
       allowedHosts: ["racko.ai", "www.racko.ai"],
+      domains: [],
     });
+  });
+
+  it("lists only (non-deleted) domains with a tracking address", async () => {
+    const withHost = await Domain.create({ name: "getracko.ai", trackingHost: "go.getracko.ai" });
+    await Domain.create({ name: "userako.in" });
+    await Domain.create({
+      name: "old.in",
+      trackingHost: "go.old.in",
+      deletedAt: new Date(),
+    });
+    expect((await trackingConfig()).domains).toEqual([
+      { id: String(withHost._id), name: "getracko.ai", trackingHost: "go.getracko.ai" },
+    ]);
   });
 });

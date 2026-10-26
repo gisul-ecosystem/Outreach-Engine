@@ -90,11 +90,21 @@ export function useImportPreview() {
 export function useImportConfirm() {
   const invalidate = useInvalidateContacts();
   return useMutation({
-    mutationFn: (input: { file: File; mapping: ColumnMapping; listId: string }) => {
+    mutationFn: (input: {
+      file: File;
+      mapping: ColumnMapping;
+      listId: string;
+      /** Also make a tracking link for every contact of the list. */
+      links?: { destinationUrl: string; domainId: string };
+    }) => {
       const form = new FormData();
       form.set("file", input.file);
       form.set("mapping", JSON.stringify(input.mapping));
       form.set("listId", input.listId);
+      if (input.links) {
+        form.set("linkDestinationUrl", input.links.destinationUrl);
+        form.set("linkDomainId", input.links.domainId);
+      }
       return apiUpload<ImportReport>("/api/contacts/import/confirm", form);
     },
     onSuccess: () => invalidate(),

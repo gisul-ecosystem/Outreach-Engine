@@ -55,6 +55,48 @@ export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
   return json?.data as T;
 }
 
+/**
+ * Downloads a file from an endpoint (e.g. a CSV) and saves it in the browser.
+ * Unlike a plain <a href download>, a server error (bad destination, session expired…) is thrown
+ * as ApiClientError with the server's message instead of failing silently or saving the error as a file.
+ * Returns the saved file name.
+ */
+export async function apiDownload(path: string): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetch(path, { credentials: "same-origin" });
+  } catch {
+    throw new ApiClientError(
+      0,
+      "NETWORK_ERROR",
+      "Could not reach the server. Check your connection.",
+    );
+  }
+  if (!response.ok) {
+    const json = (await response.json().catch(() => null)) as {
+      error?: { code: string; message: string };
+    } | null;
+    throw new ApiClientError(
+      response.status,
+      json?.error?.code ?? "HTTP_ERROR",
+      json?.error?.message ?? `Download failed (${response.status})`,
+    );
+  }
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const filename = /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? "download";
+  const url = URL.createObjectURL(await response.blob());
+  // The link must be in the page for every browser to start the download.
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return filename;
+}
+
 async function request<T>(path: string, options: ApiOptions): Promise<T> {
   const { body, headers, ...rest } = options;
   let response: Response;

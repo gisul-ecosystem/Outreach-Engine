@@ -45,6 +45,26 @@ export function useUpdateDomain() {
   });
 }
 
+/** Sets (or removes, with "") the tracking address used for links in emails from this domain. */
+export function useSetTrackingHost() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, trackingHost }: { id: string; trackingHost: string }) =>
+      apiFetch<DomainDTO>(`/api/domains/${id}`, { method: "PATCH", body: { trackingHost } }),
+    onSuccess: (domain) => {
+      toast.success(
+        domain.trackingHost
+          ? `Links for ${domain.name} now use ${domain.trackingHost}`
+          : `Tracking address of ${domain.name} removed`,
+      );
+      return Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.domains.all }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.tracking.config }),
+      ]);
+    },
+  });
+}
+
 export function useDeleteDomain() {
   const invalidate = useInvalidateDomains();
   return useMutation({

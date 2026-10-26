@@ -5,6 +5,12 @@ const listSchema = new Schema(
   {
     name: { type: String, required: true, trim: true },
     description: { type: String, default: "", trim: true },
+    /**
+     * Last tracking-link choice for this list (set at import / links download), so downloading the
+     * links again gives the same links: where they lead, and which sending domain they are made for.
+     */
+    linkDestinationUrl: { type: String, default: null },
+    linkDomainId: { type: Schema.Types.ObjectId, ref: "Domain", default: null },
     deletedAt: deletedAtField,
   },
   { timestamps: true, collection: "lists" },

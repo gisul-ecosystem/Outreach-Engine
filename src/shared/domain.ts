@@ -36,12 +36,31 @@ export const domainNameSchema = z
 export const createDomainSchema = z.object({ name: domainNameSchema });
 export type CreateDomainInput = z.input<typeof createDomainSchema>;
 
+/** "go.tryracko.in" belongs to "tryracko.in": the domain itself or one of its subdomains. */
+export function isHostOfDomain(host: string, domain: string): boolean {
+  return host === domain || host.endsWith(`.${domain}`);
+}
+
+/** Tracking address of a domain, e.g. "go.tryracko.in". Empty = none (links use TRACKING_BASE_URL). */
+export const trackingHostSchema = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+  z
+    .string()
+    .transform(cleanDomainInput)
+    .pipe(z.string().refine(isValidDomainName, "Enter an address like go.example.com"))
+    .nullable(),
+);
+
 export const updateDomainSchema = z
   .object({
     name: domainNameSchema.optional(),
     status: z.enum(DOMAIN_STATUSES).optional(),
+    trackingHost: trackingHostSchema.optional(),
   })
-  .refine((v) => v.name !== undefined || v.status !== undefined, "Nothing to update");
+  .refine(
+    (v) => v.name !== undefined || v.status !== undefined || v.trackingHost !== undefined,
+    "Nothing to update",
+  );
 export type UpdateDomainInput = z.input<typeof updateDomainSchema>;
 
 export const listDomainsQuerySchema = paginationSchema.extend({
@@ -63,6 +82,8 @@ export type DomainDTO = {
     records: { spf: string[]; dkim: string[]; dmarc: string[]; mx: string[] };
     checkedAt: string | null;
   };
+  /** Tracking-link host for emails from this domain, e.g. "go.tryracko.in"; null = TRACKING_BASE_URL. */
+  trackingHost: string | null;
   inboxCount: number;
   createdAt: string;
   updatedAt: string;

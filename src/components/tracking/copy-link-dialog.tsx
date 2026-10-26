@@ -17,6 +17,12 @@ import { Input } from "@/components/ui/input";
 import { errorMessage } from "@/lib/client/api";
 import type { ContactDTO } from "@/shared/contact";
 import type { TrackedLinkDTO } from "@/shared/tracking";
+import {
+  destinationOf,
+  EMPTY_LINK_TARGET,
+  LinkTargetFields,
+  type LinkTarget,
+} from "./link-target-fields";
 import { LocalLinksBanner } from "./local-links-banner";
 import { useCreateLink, useTrackingConfig } from "./use-tracking";
 
@@ -67,18 +73,13 @@ export function CopyLinkDialog({
 function CopyLinkForm({ contact, onClose }: { contact: ContactDTO; onClose: () => void }) {
   const config = useTrackingConfig();
   const create = useCreateLink();
-  const [path, setPath] = useState("");
+  const [target, setTarget] = useState<LinkTarget>(EMPTY_LINK_TARGET);
   const [words, setWords] = useState(DEFAULT_WORDS);
   const [fresh, setFresh] = useState(false);
   const [copied, setCopied] = useState<TrackedLinkDTO | null>(null);
 
   const homepage = config.data?.homepage ?? "";
-  let destination = homepage;
-  try {
-    destination = path.trim() ? new URL(path.trim(), homepage).toString() : homepage;
-  } catch {
-    // an unfinished path: the server checks the final address anyway
-  }
+  const destination = destinationOf(target.path, homepage);
   const name = [contact.firstName, contact.lastName].filter(Boolean).join(" ");
   const doNotEmail = contact.suppressed || contact.status !== "active";
 
@@ -87,6 +88,7 @@ function CopyLinkForm({ contact, onClose }: { contact: ContactDTO; onClose: () =
       const link = await create.mutateAsync({
         contactId: contact.id,
         destinationUrl: destination,
+        domainId: target.domainId,
         label: words.trim(),
         new: fresh,
       });
@@ -120,19 +122,7 @@ function CopyLinkForm({ contact, onClose }: { contact: ContactDTO; onClose: () =
       )}
 
       <FieldGroup>
-        <Field>
-          <FieldLabel htmlFor="link-path">Destination</FieldLabel>
-          <div className="flex items-center gap-1 text-sm">
-            <span className="shrink-0 text-muted-foreground">{homepage || "…"}</span>
-            <Input
-              id="link-path"
-              placeholder="/pricing (optional)"
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-            />
-          </div>
-          <FieldDescription>Leave empty for the homepage.</FieldDescription>
-        </Field>
+        <LinkTargetFields id="copy-link" value={target} onChange={setTarget} config={config.data} />
         <Field>
           <FieldLabel htmlFor="link-words">Link words</FieldLabel>
           <Input id="link-words" value={words} onChange={(e) => setWords(e.target.value)} />

@@ -7,7 +7,7 @@ import { ApiError } from "@/server/lib/errors";
 import { logEvent } from "@/server/services/event.service";
 import { releaseScheduledMessages } from "@/server/services/queue.service";
 import type { Paginated } from "@/shared/common";
-import type { DomainDTO } from "@/shared/domain";
+import { isHostOfDomain, type DomainDTO } from "@/shared/domain";
 import type { DomainStatus } from "@/shared/enums";
 
 type DomainRecord = DomainDoc & { _id: Types.ObjectId; createdAt: Date; updatedAt: Date };
@@ -34,6 +34,7 @@ function toDTO(domain: DomainRecord, inboxCount: number): DomainDTO {
       },
       checkedAt: dns?.checkedAt ? dns.checkedAt.toISOString() : null,
     },
+    trackingHost: domain.trackingHost ?? null,
     inboxCount,
     createdAt: domain.createdAt.toISOString(),
     updatedAt: domain.updatedAt.toISOString(),
@@ -129,7 +130,7 @@ export async function createDomain(
 
 export async function updateDomain(
   id: string,
-  input: { name?: string; status?: DomainStatus },
+  input: { name?: string; status?: DomainStatus; trackingHost?: string | null },
   options: { resolver?: DnsResolver } = {},
 ): Promise<DomainDTO> {
   await connectDB();
@@ -154,6 +155,23 @@ export async function updateDomain(
   }
   if (input.status !== undefined && input.status !== domain.status) update.status = input.status;
 
+  // A tracking address must be on this domain, so links in its emails show the sender's own domain.
+  const name = (update.name as string | undefined) ?? domain.name;
+  const trackingHost =
+    input.trackingHost !== undefined ? input.trackingHost : (domain.trackingHost ?? null);
+  if (trackingHost && !isHostOfDomain(trackingHost, name)) {
+    if (input.trackingHost !== undefined) {
+      throw new ApiError(
+        400,
+        "TRACKING_HOST_NOT_ON_DOMAIN",
+        `The tracking address must be ${name} or end with .${name} (e.g. go.${name}).`,
+      );
+    }
+    update.trackingHost = null; // renamed: the old address no longer belongs to this domain
+  } else if (trackingHost !== (domain.trackingHost ?? null)) {
+    update.trackingHost = trackingHost;
+  }
+
   if (Object.keys(update).length === 0) return toDTOWithCount(domain);
 
   let updated: DomainRecord | null;
@@ -176,6 +194,15 @@ export async function updateDomain(
     await logEvent("domain.activated", `Domain ${updated.name} activated`, {
       domainId: updated._id,
     });
+  }
+  if ("trackingHost" in update) {
+    await logEvent(
+      "domain.tracking_host",
+      update.trackingHost
+        ? `Tracking address of ${updated.name} set to ${String(update.trackingHost)}`
+        : `Tracking address of ${updated.name} removed`,
+      { domainId: updated._id },
+    );
   }
   if (renamed) {
     await logEvent("domain.renamed", `Domain ${domain.name} renamed to ${updated.name}`, {

@@ -24,6 +24,9 @@ export type ListDTO = {
   name: string;
   description: string;
   contactCount: number;
+  /** Last tracking-link choice (import / links download); null = none yet. */
+  linkDestinationUrl: string | null;
+  linkDomainId: string | null;
   createdAt: string;
   updatedAt: string;
 };
