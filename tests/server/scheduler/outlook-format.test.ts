@@ -23,7 +23,7 @@ vi.mock("@/server/providers", async (importOriginal) => {
 });
 vi.mock("@/server/lib/mx-check", () => ({ domainAcceptsEmail: async () => true }));
 
-import { Campaign, Message } from "@/server/db/models";
+import { Campaign, Inbox, Message } from "@/server/db/models";
 import { MicrosoftGraphProvider } from "@/server/providers/microsoft-graph.provider";
 import type { SentEmail } from "@/server/providers/types";
 import { mailboxTick, matchSentEmails, normalizeSubject } from "@/server/scheduler/mailbox";
@@ -247,6 +247,9 @@ describe("Outlook format in the worker", () => {
     expect(graph.sent).toHaveLength(2);
     await mailboxTick(NOW); // learns each first email's Message-ID + Graph id
     await Message.updateMany({ status: "sent" }, { $set: { sentAt: NOW } });
+    // The sender stamps lastSentAt with the real clock; pin it to the fake clock so the gap rule
+    // does not push the follow-up past the test's day once the real date is later than NOW + 3 days.
+    await Inbox.updateMany({}, { $set: { lastSentAt: NOW } });
     await Campaign.updateOne({ _id: world.campaign._id }, { $set: { status: "completed" } });
     const followUp = await createCampaign({
       name: "Follow-up",
@@ -285,6 +288,7 @@ describe("Outlook format in the worker", () => {
       { status: "sent" },
       { $set: { sentAt: NOW, internetMessageId: "<old@x>" } },
     );
+    await Inbox.updateMany({}, { $set: { lastSentAt: NOW } }); // see the test above
     await Campaign.updateOne({ _id: world.campaign._id }, { $set: { status: "completed" } });
     const followUp = await createCampaign({
       name: "Follow-up",

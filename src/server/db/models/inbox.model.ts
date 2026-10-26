@@ -22,6 +22,10 @@ const inboxSchema = new Schema(
     consecutiveFailures: { type: Number, default: 0, min: 0 },
     // The mailbox reader (bounces + replies) has looked at emails received up to this moment.
     mailboxCheckedAt: { type: Date, default: null },
+    // The Sent Items tracker (emails sent by hand + by the engine) has read emails sent up to this moment.
+    sentItemsCheckedAt: { type: Date, default: null },
+    // The same tracker has read the Inbox for replies to those emails up to this moment.
+    repliesCheckedAt: { type: Date, default: null },
     deletedAt: deletedAtField,
   },
   { timestamps: true, collection: "inboxes" },

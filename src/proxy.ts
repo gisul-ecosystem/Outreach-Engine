@@ -10,11 +10,17 @@ function isPublicApi(pathname: string) {
   return pathname === "/api/health" || pathname.startsWith("/api/auth/");
 }
 
+/** Tracking links (/r/<token>) are opened by the people we email, who are not logged in. */
+function isTrackingLink(pathname: string) {
+  return pathname.startsWith("/r/");
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isApi = pathname === "/api" || pathname.startsWith("/api/");
 
   if (isApi && isPublicApi(pathname)) return NextResponse.next();
+  if (isTrackingLink(pathname)) return NextResponse.next();
 
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   const session = token ? await verifySessionToken(token) : null;

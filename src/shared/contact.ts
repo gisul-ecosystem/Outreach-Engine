@@ -34,8 +34,22 @@ export type ContactDTO = {
   status: ContactStatus;
   /** The email is on the suppression list (it will never be emailed). */
   suppressed: boolean;
+  /** What this person did: emails sent to them, replies, link clicks. */
+  engagement: ContactEngagementDTO;
   createdAt: string;
   updatedAt: string;
+};
+
+export type ContactEngagementDTO = {
+  emailsSent: number;
+  lastEmailedAt: string | null;
+  replyCount: number;
+  lastRepliedAt: string | null;
+  /** Every open of their tracking links, bots included. */
+  clickCount: number;
+  /** Opens judged to be a real person. */
+  realClickCount: number;
+  lastClickedAt: string | null;
 };
 
 // ---------- CSV import ----------

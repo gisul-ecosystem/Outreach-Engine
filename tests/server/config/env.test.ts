@@ -17,6 +17,41 @@ describe("parseEnv", () => {
     expect(env.ADMIN_EMAIL).toBeUndefined();
   });
 
+  it("click tracking has safe defaults (local links, racko.ai only, no proxy trusted)", () => {
+    const env = parseEnv(valid);
+    expect(env.MAILBOX_READING).toBe(true);
+    expect(env.TRACKING_BASE_URL).toBe("http://localhost:3000");
+    expect(env.TRACKING_ALLOWED_HOSTS).toEqual(["racko.ai", "www.racko.ai"]);
+    expect(env.TRACKING_FALLBACK_URL).toBe("https://racko.ai");
+    expect(env.TRACKING_IP_SECRET).toBeUndefined();
+    expect(env.TRUST_PROXY).toBe(false);
+  });
+
+  it("reads the allowed hosts as a list", () => {
+    const env = parseEnv({ ...valid, TRACKING_ALLOWED_HOSTS: " Racko.ai , go.racko.ai,," });
+    expect(env.TRACKING_ALLOWED_HOSTS).toEqual(["racko.ai", "go.racko.ai"]);
+  });
+
+  it.each(["http://racko.ai", "https://evil.com"])(
+    "rejects a fallback address %s that is not https on an allowed host",
+    (url) => {
+      expect(() => parseEnv({ ...valid, TRACKING_FALLBACK_URL: url })).toThrow(
+        /TRACKING_FALLBACK_URL/,
+      );
+    },
+  );
+
+  it("rejects a short TRACKING_IP_SECRET without printing it", () => {
+    expect(() => parseEnv({ ...valid, TRACKING_IP_SECRET: "short-ip-secret" })).toThrow(
+      /TRACKING_IP_SECRET/,
+    );
+    try {
+      parseEnv({ ...valid, TRACKING_IP_SECRET: "short-ip-secret" });
+    } catch (err) {
+      expect((err as Error).message).not.toContain("short-ip-secret");
+    }
+  });
+
   it("parses true/false strings into booleans", () => {
     const env = parseEnv({ ...valid, DRY_RUN: "false", SENDING_ENABLED: "true" });
     expect(env.DRY_RUN).toBe(false);

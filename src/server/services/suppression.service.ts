@@ -95,6 +95,34 @@ export async function createSuppression(input: {
 }
 
 /**
+ * Someone replied "no" / "unsubscribe": never email them again. Returns true when they were newly
+ * added (already suppressed = false). Used by the mailbox tick and the hand-sent reply reader.
+ */
+export async function suppressOptOutReply(
+  email: string,
+  replyText: string,
+  refs: { campaignId?: Types.ObjectId | null } = {},
+): Promise<boolean> {
+  const added = await Suppression.updateOne(
+    { email },
+    {
+      $setOnInsert: {
+        email,
+        reason: "unsubscribed",
+        note: `Replied "${replyText.trim().split(/\r?\n/)[0]?.slice(0, 60) ?? "no"}"`,
+      },
+    },
+    { upsert: true },
+  );
+  if (added.upsertedCount === 0) return false;
+  await syncContactsWithSuppressions([email], "unsubscribed");
+  await logEvent("suppression.added", `${email} replied "no" — added to the suppression list`, {
+    campaignId: refs.campaignId ?? null,
+  });
+  return true;
+}
+
+/**
  * Removes an email from the suppression list (hard delete — a deliberate action).
  * The contact's status is NOT changed back automatically; edit the contact to make it active again.
  */

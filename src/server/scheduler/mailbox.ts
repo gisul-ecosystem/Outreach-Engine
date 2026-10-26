@@ -30,7 +30,10 @@ import {
 import { autoPauseCampaign } from "@/server/services/campaign.service";
 import { logEvent } from "@/server/services/event.service";
 import { releaseScheduledMessages } from "@/server/services/queue.service";
-import { syncContactsWithSuppressions } from "@/server/services/suppression.service";
+import {
+  suppressOptOutReply,
+  syncContactsWithSuppressions,
+} from "@/server/services/suppression.service";
 
 const log = createLogger("mailbox");
 
@@ -339,27 +342,7 @@ async function handleReply(
   );
   const optOut = isOptOutReply(email);
   if (optOut) {
-    const added = await Suppression.updateOne(
-      { email: email.fromEmail },
-      {
-        $setOnInsert: {
-          email: email.fromEmail,
-          reason: "unsubscribed",
-          note: `Replied "${email.uniqueBody.trim().split(/\r?\n/)[0]?.slice(0, 60) ?? "no"}"`,
-        },
-      },
-      { upsert: true },
-    );
-    if (added.upsertedCount > 0) {
-      await syncContactsWithSuppressions([email.fromEmail], "unsubscribed");
-      await logEvent(
-        "suppression.added",
-        `${email.fromEmail} replied "no" — added to the suppression list`,
-        {
-          campaignId: first.campaignId,
-        },
-      );
-    }
+    await suppressOptOutReply(email.fromEmail, email.uniqueBody, { campaignId: first.campaignId });
   }
   if (marked.modifiedCount === 0) return null; // seen in an earlier look
   await logEvent("message.replied", `${email.fromEmail} replied to ${inbox.email}`, {

@@ -2,6 +2,7 @@ import {
   GlobeIcon,
   InboxIcon,
   LayoutDashboardIcon,
+  MailCheckIcon,
   PlugZapIcon,
   SendIcon,
   SettingsIcon,
@@ -14,6 +15,7 @@ export type NavItem = { title: string; href: string; icon: LucideIcon };
 export const NAV_ITEMS: NavItem[] = [
   { title: "Dashboard", href: "/", icon: LayoutDashboardIcon },
   { title: "Campaigns", href: "/campaigns", icon: SendIcon },
+  { title: "Sent emails", href: "/sent", icon: MailCheckIcon },
   { title: "Contacts", href: "/contacts", icon: UsersIcon },
   { title: "Inboxes", href: "/inboxes", icon: InboxIcon },
   { title: "Domains", href: "/domains", icon: GlobeIcon },

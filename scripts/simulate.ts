@@ -17,6 +17,7 @@ const SIM_DB = "outreach_sim";
 process.env.MONGODB_URI = simUri(process.env.MONGODB_URI ?? "");
 process.env.DRY_RUN = "true"; // never anything else in a simulation
 process.env.SENDING_ENABLED = "false";
+process.env.MAILBOX_READING = "false"; // the Sent Items / replies reader would call Microsoft — never in a simulation
 
 function simUri(uri: string): string {
   const match = /^(mongodb(?:\+srv)?:\/\/[^/?]+)(?:\/[^?]*)?(\?.*)?$/.exec(uri);

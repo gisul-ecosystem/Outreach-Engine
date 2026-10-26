@@ -1,6 +1,7 @@
 // Worker entry point: a separate Node process (`npm run worker`), never started from inside Next.js.
 // Runs repeating ticks (BUILD_PLAN section 6): planner (30 s), sender (10 s), recovery (60 s),
-// plus the mailbox tick (5 min) that finds bounce reports and replies.
+// plus the mailbox tick (5 min) that finds bounce reports and replies, and the Sent Items tick (5 min)
+// that records every email sent from an attached inbox (by hand in Outlook or by the engine).
 // Only ONE worker may run at a time: it holds a lock in the settings document.
 import { randomUUID } from "node:crypto";
 import { loadEnv } from "@/server/config/load-env";
@@ -12,6 +13,7 @@ import { mailboxTick } from "@/server/scheduler/mailbox";
 import { plannerTick } from "@/server/scheduler/planner";
 import { recoveryTick } from "@/server/scheduler/recovery";
 import { senderTick } from "@/server/scheduler/sender";
+import { sentItemsTick } from "@/server/scheduler/sent-items";
 import { startTicker, type Ticker } from "@/server/scheduler/ticker";
 import {
   acquireWorkerLock,
@@ -26,6 +28,8 @@ const SENDER_INTERVAL_MS = 10_000;
 const RECOVERY_INTERVAL_MS = 60_000;
 /** Reads each sending inbox for bounce reports and replies. */
 const MAILBOX_INTERVAL_MS = 5 * 60_000;
+/** Reads each attached inbox's Sent Items (runs in dry-run too: it only reads). */
+const SENT_ITEMS_INTERVAL_MS = 5 * 60_000;
 /** Finishing an in-progress send can take a moment (real Microsoft calls); after this we exit anyway. */
 const SHUTDOWN_TIMEOUT_MS = 30_000;
 
@@ -103,9 +107,15 @@ async function main() {
       onError,
       run: () => guarded("mailbox", () => mailboxTick()),
     }),
+    startTicker({
+      name: "sent-items",
+      intervalMs: SENT_ITEMS_INTERVAL_MS,
+      onError,
+      run: () => guarded("sent-items", () => sentItemsTick()),
+    }),
   ];
   log.info(
-    "running (planner 30 s, sender 10 s, recovery 60 s, bounce/reply check 5 min). Press Ctrl+C to stop.",
+    "running (planner 30 s, sender 10 s, recovery 60 s, bounce/reply check 5 min, Sent Items tracking 5 min). Press Ctrl+C to stop.",
   );
 }
 

@@ -13,7 +13,13 @@ import { logEvent } from "@/server/services/event.service";
 import { findListOr404 } from "@/server/services/list.service";
 import { syncContactsWithSuppressions } from "@/server/services/suppression.service";
 import type { Paginated } from "@/shared/common";
-import type { ColumnMapping, ContactDTO, ImportPreview, ImportReport } from "@/shared/contact";
+import type {
+  ColumnMapping,
+  ContactDTO,
+  ContactEngagementDTO,
+  ImportPreview,
+  ImportReport,
+} from "@/shared/contact";
 import type { ContactStatus, SuppressionReason } from "@/shared/enums";
 import { contactStatusForSuppression } from "@/shared/suppression";
 
@@ -36,8 +42,23 @@ function toDTO(c: ContactRecord, suppressed: boolean): ContactDTO {
     listIds: (c.listIds ?? []).map(String),
     status: c.status as ContactStatus,
     suppressed,
+    engagement: engagementDTO(c.engagement),
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
+  };
+}
+
+const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
+
+function engagementDTO(e: ContactRecord["engagement"] | undefined): ContactEngagementDTO {
+  return {
+    emailsSent: e?.emailsSent ?? 0,
+    lastEmailedAt: iso(e?.lastEmailedAt),
+    replyCount: e?.replyCount ?? 0,
+    lastRepliedAt: iso(e?.lastRepliedAt),
+    clickCount: e?.clickCount ?? 0,
+    realClickCount: e?.realClickCount ?? 0,
+    lastClickedAt: iso(e?.lastClickedAt),
   };
 }
 
@@ -53,7 +74,7 @@ async function suppressionsFor(emails: string[]): Promise<Map<string, Suppressio
   return found;
 }
 
-async function findContactOr404(id: string): Promise<ContactRecord> {
+export async function findContactOr404(id: string): Promise<ContactRecord> {
   const contact = await Contact.findOne(notDeleted({ _id: id })).lean<ContactRecord>();
   if (!contact) throw new ApiError(404, "CONTACT_NOT_FOUND", "Contact not found");
   return contact;

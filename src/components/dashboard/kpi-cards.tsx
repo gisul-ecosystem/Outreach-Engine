@@ -5,6 +5,7 @@ import {
   CalendarDaysIcon,
   InboxIcon,
   MailCheckIcon,
+  MousePointerClickIcon,
   SendIcon,
   ServerIcon,
   type LucideIcon,
@@ -61,11 +62,17 @@ const KPIS: Kpi[] = [
     value: (s) => s.activeInboxes,
     tint: "bg-muted text-muted-foreground",
   },
+  {
+    label: "Real clicks this week",
+    icon: MousePointerClickIcon,
+    value: (s) => s.realClicksThisWeek,
+    tint: "bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300",
+  },
 ];
 
 export function KpiCards({ summary }: { summary: DashboardSummaryDTO | undefined }) {
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
       {KPIS.map((kpi) => {
         const value = summary ? kpi.value(summary) : null;
         return (

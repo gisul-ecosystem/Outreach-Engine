@@ -1,0 +1,66 @@
+# Builds the Docker image and pushes it to Docker Hub. Build and push only — no deploy.
+#   push to main   → <namespace>/outreach-engine:latest and :sha-<short commit>
+#   tag v1.2.3     → :1.2.3 and :1.2
+#   pull request   → build only (checks the Dockerfile still works), nothing is pushed
+#
+# Needed in GitHub → repo Settings → Secrets and variables → Actions:
+#   secret   DOCKERHUB_USERNAME   Docker Hub user that may push to the namespace
+#   secret   DOCKERHUB_TOKEN      Docker Hub access token of that user (Read & Write)
+#   variable DOCKERHUB_NAMESPACE  Docker Hub account/organization (optional, default gisul-docker)
+name: Docker image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: docker.io/${{ vars.DOCKERHUB_NAMESPACE || 'gisul-docker' }}/outreach-engine
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Work out image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

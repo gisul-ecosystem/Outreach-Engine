@@ -13,6 +13,20 @@ const contactSchema = new Schema(
     custom: { type: Map, of: String, default: {} },
     listIds: { type: [{ type: Schema.Types.ObjectId, ref: "List" }], default: [] },
     status: { type: String, enum: CONTACT_STATUSES, default: "active" },
+    // What this person did, from Sent Items, replies and link clicks (engagement.service.ts keeps it
+    // up to date; `npm run tracking:rebuild` recalculates it from scratch).
+    engagement: {
+      emailsSent: { type: Number, default: 0 },
+      lastEmailedAt: { type: Date, default: null },
+      replyCount: { type: Number, default: 0 },
+      lastRepliedAt: { type: Date, default: null },
+      /** Every open of their links, bots included. */
+      clickCount: { type: Number, default: 0 },
+      /** Opens judged to be a real person. */
+      realClickCount: { type: Number, default: 0 },
+      /** Last real-person click. */
+      lastClickedAt: { type: Date, default: null },
+    },
     deletedAt: deletedAtField,
   },
   { timestamps: true, collection: "contacts" },

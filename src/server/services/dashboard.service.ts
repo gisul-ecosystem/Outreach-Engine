@@ -6,7 +6,7 @@
 import { DateTime } from "luxon";
 import type { Types } from "mongoose";
 import { connectDB } from "@/server/db/connect";
-import { Campaign, Domain, Event, Inbox, Message } from "@/server/db/models";
+import { Campaign, Contact, Domain, Event, Inbox, LinkClick, Message } from "@/server/db/models";
 import { notDeleted } from "@/server/db/soft-delete";
 import { sendingMode } from "@/server/providers";
 import { isInsideWindow, nextWindowStart, startOfDayInTz } from "@/server/scheduler/time";
@@ -16,7 +16,9 @@ import { isWorkerRunning } from "@/server/services/worker.service";
 import { getEnv } from "@/server/config/env";
 import type {
   ActivityDTO,
+  ClickersPeriod,
   DashboardCampaignDTO,
+  DashboardClickerDTO,
   DashboardInboxDTO,
   DashboardSummaryDTO,
   TimelineDayDTO,
@@ -42,6 +44,7 @@ export async function getDashboardSummary(now = new Date()): Promise<DashboardSu
     activeInboxes,
     next,
     workerRunning,
+    realClicksThisWeek,
   ] = await Promise.all([
     Message.countDocuments({ status: "sent", sentAt: { $gte: dayStart } }),
     Message.countDocuments({ status: "sent", sentAt: { $gte: weekStart } }),
@@ -55,6 +58,7 @@ export async function getDashboardSummary(now = new Date()): Promise<DashboardSu
       .select("toEmail inboxId scheduledAt")
       .lean(),
     isWorkerRunning(now),
+    LinkClick.countDocuments({ verdict: "click", at: { $gte: weekStart } }),
   ]);
 
   let nextEmail: DashboardSummaryDTO["nextEmail"] = null;
@@ -81,6 +85,7 @@ export async function getDashboardSummary(now = new Date()): Promise<DashboardSu
     inQueue,
     failedToday,
     activeInboxes,
+    realClicksThisWeek,
     nextEmail,
     idleReason,
     dryRun: env.DRY_RUN,
@@ -201,6 +206,62 @@ export async function getDashboardActivity(limit = 20): Promise<ActivityDTO[]> {
     message: e.message ?? "",
     createdAt: (e as unknown as { createdAt: Date }).createdAt.toISOString(),
   }));
+}
+
+/**
+ * Clicks per person: everyone who opened a tracking link in the period, most real clicks first
+ * (then most opens). Bot / "maybe a bot" opens are counted separately so they never look like interest.
+ */
+export async function getDashboardClickers(
+  period: ClickersPeriod,
+  limit = 10,
+  now = new Date(),
+): Promise<DashboardClickerDTO[]> {
+  await connectDB();
+  const tz = await getTimezone();
+  const match =
+    period === "week"
+      ? { at: { $gte: DateTime.fromJSDate(now, { zone: tz }).startOf("week").toJSDate() } }
+      : {};
+  const isReal = { $eq: ["$verdict", "click"] };
+  const rows = await LinkClick.aggregate<{
+    _id: Types.ObjectId;
+    realClicks: number;
+    opens: number;
+    lastRealClickAt: Date | null;
+    lastOpenAt: Date;
+  }>([
+    { $match: match },
+    {
+      $group: {
+        _id: "$contactId",
+        realClicks: { $sum: { $cond: [isReal, 1, 0] } },
+        opens: { $sum: 1 },
+        lastRealClickAt: { $max: { $cond: [isReal, "$at", null] } },
+        lastOpenAt: { $max: "$at" },
+      },
+    },
+    { $sort: { realClicks: -1, opens: -1, lastOpenAt: -1 } },
+    { $limit: limit },
+  ]);
+  const contacts = await Contact.find({ _id: { $in: rows.map((r) => r._id) } })
+    .select("email firstName lastName company")
+    .lean();
+  const byId = new Map(contacts.map((c) => [String(c._id), c]));
+
+  return rows.map((r) => {
+    const c = byId.get(String(r._id));
+    return {
+      contactId: String(r._id),
+      email: c?.email ?? "(deleted contact)",
+      name: c ? [c.firstName, c.lastName].filter(Boolean).join(" ") : "",
+      company: c?.company ?? "",
+      realClicks: r.realClicks,
+      botOpens: r.opens - r.realClicks,
+      lastRealClickAt: iso(r.lastRealClickAt),
+      lastOpenAt: r.lastOpenAt.toISOString(),
+    };
+  });
 }
 
 /** Running and paused campaigns first, then the most recently completed ones. */

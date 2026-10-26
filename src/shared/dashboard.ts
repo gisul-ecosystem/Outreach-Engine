@@ -6,6 +6,30 @@ export const timelineQuerySchema = z.object({
   days: z.coerce.number().int().min(1).max(90).default(14),
 });
 
+/** `GET /api/dashboard/clickers?period=week&limit=10` — clicks per person. */
+export const clickersQuerySchema = z.object({
+  /** week = since Monday 00:00 (app timezone); all = every click kept (one year). */
+  period: z.enum(["week", "all"]).default("week"),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+});
+export type ClickersPeriod = z.infer<typeof clickersQuerySchema>["period"];
+
+/** One person and how often they opened their tracking links. */
+export type DashboardClickerDTO = {
+  contactId: string;
+  email: string;
+  name: string;
+  company: string;
+  /** Opens judged to be a real person. */
+  realClicks: number;
+  /** Opens by security scanners / bots, and "maybe a bot". */
+  botOpens: number;
+  /** Last real click (null when only bots opened it). */
+  lastRealClickAt: string | null;
+  /** Last open of any kind. */
+  lastOpenAt: string;
+};
+
 export type SendingModeDTO = "dry-run" | "live" | "disabled";
 
 export type DashboardSummaryDTO = {
@@ -16,6 +40,8 @@ export type DashboardSummaryDTO = {
   inQueue: number;
   failedToday: number;
   activeInboxes: number;
+  /** Tracking-link clicks judged to be a real person, since Monday 00:00 (app timezone). */
+  realClicksThisWeek: number;
   nextEmail: { to: string; fromInbox: string; scheduledAt: string } | null;
   /** Why nothing is scheduled (null when something is, or when there is nothing to explain). */
   idleReason: string | null;

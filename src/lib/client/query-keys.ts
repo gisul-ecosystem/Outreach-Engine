@@ -9,6 +9,7 @@ export const queryKeys = {
     campaigns: ["dashboard", "campaigns"] as const,
     timeline: (days: number) => ["dashboard", "timeline", days] as const,
     activity: ["dashboard", "activity"] as const,
+    clickers: (period: string) => ["dashboard", "clickers", period] as const,
   },
   auth: {
     me: ["auth", "me"] as const,
@@ -49,5 +50,17 @@ export const queryKeys = {
       ["campaigns", "messages", id, params] as const,
     preview: (id: string, input: object) => ["campaigns", "preview", id, input] as const,
     readiness: (id: string) => ["campaigns", "readiness", id] as const,
+  },
+  tracking: {
+    all: ["tracking"] as const,
+    config: ["tracking", "config"] as const,
+    links: (contactId: string) => ["tracking", "links", contactId] as const,
+    timeline: (contactId: string) => ["tracking", "timeline", contactId] as const,
+    clicks: (params: ListParams & object) => ["tracking", "clicks", params] as const,
+  },
+  sentEmails: {
+    all: ["sentEmails"] as const,
+    stats: (params: object) => ["sentEmails", "stats", params] as const,
+    list: (params: ListParams & object) => ["sentEmails", "list", params] as const,
   },
 };

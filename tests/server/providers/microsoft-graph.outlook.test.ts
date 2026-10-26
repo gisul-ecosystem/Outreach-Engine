@@ -243,6 +243,84 @@ describe("listSentEmails (Sent Items, for the Message-ID Microsoft made)", () =>
   });
 });
 
+describe("listSentItems (Sent Items with every recipient, to track emails sent by hand)", () => {
+  const item = (id: string, sentDateTime: string) => ({
+    id,
+    internetMessageId: `<${id}@x.prod.outlook.com>`,
+    conversationId: `conv-${id}`,
+    subject: "Hello",
+    sentDateTime,
+    toRecipients: [{ emailAddress: { address: "Ann@X.com" } }],
+    ccRecipients: [{ emailAddress: { address: "bob@x.com" } }],
+    bccRecipients: [],
+    body: {
+      contentType: "html",
+      content: `<p>Hi Ann, <a href="https://go.racko.ai/r/${id}Token0001">take a look at Racko</a></p>`,
+    },
+  });
+
+  it("reads a time range oldest first, with To/CC/BCC, following paging", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        json({
+          value: [item("g1", "2026-10-22T05:00:00Z")],
+          "@odata.nextLink":
+            "https://graph.microsoft.com/v1.0/users/sales@tryracko.in/mailFolders/sentitems/messages?$skip=50",
+        }),
+      )
+      .mockResolvedValueOnce(
+        json({ value: [item("g2", "2026-10-22T06:00:00Z"), { id: "draft", sentDateTime: null }] }),
+      );
+    const page = await outlook().listSentItems(
+      "sales@tryracko.in",
+      new Date("2026-10-22T04:00:00Z"),
+      new Date("2026-10-22T07:00:00Z"),
+    );
+    const url = decodeURIComponent(call().url);
+    expect(url).toContain(
+      "$filter=sentDateTime ge 2026-10-22T04:00:00.000Z and sentDateTime le 2026-10-22T07:00:00.000Z&$orderby=sentDateTime asc",
+    );
+    expect(url).toContain("ccRecipients,bccRecipients,sentDateTime,body");
+    expect(decodeURIComponent(call(1).url)).toContain("$skip=50");
+    expect(page.complete).toBe(true);
+    // Only the tracking tokens are taken from the body; the body itself is not returned.
+    expect(page.items).toEqual([
+      {
+        id: "g1",
+        internetMessageId: "<g1@x.prod.outlook.com>",
+        conversationId: "conv-g1",
+        subject: "Hello",
+        to: ["ann@x.com"],
+        cc: ["bob@x.com"],
+        bcc: [],
+        sentAt: new Date("2026-10-22T05:00:00Z"),
+        linkTokens: ["g1Token0001"],
+      },
+      expect.objectContaining({ id: "g2", linkTokens: ["g2Token0001"] }),
+    ]);
+    expect(JSON.stringify(page)).not.toContain("Hi Ann");
+  });
+
+  it("says when it stopped at the page cap (more emails remain)", async () => {
+    fetchMock.mockImplementation(async () =>
+      json({
+        value: [item("g", "2026-10-22T05:00:00Z")],
+        "@odata.nextLink": "https://graph.microsoft.com/v1.0/users/a@b.co/next",
+      }),
+    );
+    const page = await outlook().listSentItems("a@b.co", new Date(0), new Date());
+    expect(fetchMock).toHaveBeenCalledTimes(10);
+    expect(page.complete).toBe(false);
+  });
+
+  it("explains a missing Mail.Read permission", async () => {
+    fetchMock.mockResolvedValue(graphError(403, "ErrorAccessDenied"));
+    await expect(outlook().listSentItems("a@b.co", new Date(0), new Date())).rejects.toMatchObject({
+      code: "MISSING_PERMISSION",
+    });
+  });
+});
+
 describe("granted permissions (read from the token's roles claim)", () => {
   const jwt = (claims: object) =>
     `header.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.signature`;

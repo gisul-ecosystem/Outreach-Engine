@@ -1,6 +1,7 @@
 import { ConfidentialClientApplication } from "@azure/msal-node";
 import { mimeForSend } from "@/server/lib/mime";
 import { outlookReplyBody, outlookSendMailBody } from "@/server/lib/outlook-message";
+import { findLinkTokens } from "@/server/tracking/token";
 import {
   ProviderError,
   type CheckResult,
@@ -11,6 +12,7 @@ import {
   type SendInput,
   type SendResult,
   type SentEmail,
+  type SentItemsPage,
 } from "./types";
 
 const GRAPH = "https://graph.microsoft.com/v1.0";
@@ -285,7 +287,7 @@ export class MicrosoftGraphProvider implements EmailProvider {
     const filter = encodeURIComponent(`receivedDateTime ge ${since.toISOString()}`);
     let path: string | null =
       `/users/${encodeURIComponent(mailbox)}/mailFolders/inbox/messages?$filter=${filter}` +
-      `&$orderby=receivedDateTime desc&$top=50&$select=id,receivedDateTime,from,subject,body,uniqueBody`;
+      `&$orderby=receivedDateTime desc&$top=50&$select=id,receivedDateTime,from,subject,body,uniqueBody,conversationId`;
     const emails: ReceivedEmail[] = [];
 
     for (let pages = 0; path && pages < 10; pages++) {
@@ -305,6 +307,7 @@ export class MicrosoftGraphProvider implements EmailProvider {
           from?: { emailAddress?: { address?: string | null; name?: string | null } } | null;
           body?: { content?: string | null } | null;
           uniqueBody?: { content?: string | null } | null;
+          conversationId?: string | null;
         }[];
         "@odata.nextLink"?: string;
       };
@@ -317,6 +320,7 @@ export class MicrosoftGraphProvider implements EmailProvider {
           subject: m.subject ?? "",
           body: m.body?.content ?? "",
           uniqueBody: m.uniqueBody?.content ?? m.body?.content ?? "",
+          conversationId: m.conversationId ?? null,
         });
       }
       const next = page["@odata.nextLink"];
@@ -370,6 +374,67 @@ export class MicrosoftGraphProvider implements EmailProvider {
       path = next ? next.replace(GRAPH, "") : null;
     }
     return emails;
+  }
+
+  /**
+   * Sent Items sent in [since, until], OLDEST first, with To/CC/BCC (follows paging, max 10 pages of 50).
+   * Oldest first so a caller that hits the cap can carry on from the last email next time.
+   * Used to track emails sent by hand from Outlook. Needs Mail.Read. Read-only.
+   * The body is read ONLY to find tracking-link tokens in it; it is dropped right here.
+   */
+  async listSentItems(mailbox: string, since: Date, until: Date): Promise<SentItemsPage> {
+    // $orderby must use the same property as $filter, in the same order (Graph rule).
+    const filter = encodeURIComponent(
+      `sentDateTime ge ${since.toISOString()} and sentDateTime le ${until.toISOString()}`,
+    );
+    let path: string | null =
+      `/users/${encodeURIComponent(mailbox)}/mailFolders/sentitems/messages?$filter=${filter}` +
+      `&$orderby=sentDateTime asc&$top=50` +
+      `&$select=id,internetMessageId,conversationId,subject,toRecipients,ccRecipients,bccRecipients,sentDateTime,body`;
+    const items: SentItemsPage["items"] = [];
+    type Recipients = { emailAddress?: { address?: string | null } | null }[] | null | undefined;
+    const addresses = (list: Recipients) =>
+      (list ?? []).map((r) => (r.emailAddress?.address ?? "").toLowerCase()).filter(Boolean);
+
+    for (let pages = 0; path && pages < 10; pages++) {
+      const response: Response = await this.graph(path);
+      if (response.status === 403) {
+        throw new ProviderError("auth", "MISSING_PERMISSION", MISSING_MAIL_READ, { status: 403 });
+      }
+      if (!response.ok) throw await MicrosoftGraphProvider.errorFromResponse(response);
+
+      const page = (await response.json()) as {
+        value: {
+          id: string;
+          internetMessageId?: string | null;
+          conversationId?: string | null;
+          subject?: string | null;
+          sentDateTime?: string | null;
+          toRecipients?: Recipients;
+          ccRecipients?: Recipients;
+          bccRecipients?: Recipients;
+          body?: { content?: string | null } | null;
+        }[];
+        "@odata.nextLink"?: string;
+      };
+      for (const m of page.value) {
+        if (!m.internetMessageId || !m.sentDateTime) continue;
+        items.push({
+          id: m.id,
+          internetMessageId: m.internetMessageId,
+          conversationId: m.conversationId ?? null,
+          subject: m.subject ?? "",
+          to: addresses(m.toRecipients),
+          cc: addresses(m.ccRecipients),
+          bcc: addresses(m.bccRecipients),
+          sentAt: new Date(m.sentDateTime),
+          linkTokens: findLinkTokens(m.body?.content ?? ""),
+        });
+      }
+      const next = page["@odata.nextLink"];
+      path = next ? next.replace(GRAPH, "") : null;
+    }
+    return { items, complete: path === null };
   }
 
   /**

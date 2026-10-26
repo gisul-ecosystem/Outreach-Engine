@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  HistoryIcon,
+  LinkIcon,
   MoreHorizontalIcon,
   PencilIcon,
   SearchIcon,
@@ -41,6 +43,9 @@ import {
 import { errorMessage } from "@/lib/client/api";
 import { useDebouncedValue } from "@/lib/client/use-debounced-value";
 import type { ContactDTO } from "@/shared/contact";
+import { CopyLinkDialog } from "@/components/tracking/copy-link-dialog";
+import { Badge } from "@/components/ui/badge";
+import { ContactPanel } from "./contact-panel";
 import { ContactStatusBadge } from "./contact-status-badge";
 import { EditContactDialog } from "./edit-contact-dialog";
 import { ImportWizard } from "./import-wizard";
@@ -48,6 +53,39 @@ import { useContacts, useDeleteContact, useLists } from "./use-contacts";
 
 const PAGE_SIZE = 25;
 const ALL = "all";
+
+/** Emailed / Replied / Clicked at a glance (from the contact's engagement). */
+function ActivityBadges({ contact }: { contact: ContactDTO }) {
+  const e = contact.engagement;
+  const maybeBots = e.clickCount - e.realClickCount;
+  if (!e.emailsSent && !e.replyCount && !e.clickCount) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {e.emailsSent > 0 && <Badge variant="outline">Emailed {e.emailsSent}×</Badge>}
+      {e.replyCount > 0 && (
+        <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+          Replied
+        </Badge>
+      )}
+      {e.realClickCount > 0 ? (
+        <Badge className="bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300">
+          ✅ Clicked {e.realClickCount}×
+        </Badge>
+      ) : (
+        maybeBots > 0 && (
+          <Badge
+            variant="secondary"
+            title="The link was opened, but it looks like a security scanner, not a person."
+          >
+            ⚠️ Maybe a bot
+          </Badge>
+        )
+      )}
+    </div>
+  );
+}
 
 export function ContactsTab() {
   const [page, setPage] = useState(1);
@@ -57,6 +95,8 @@ export function ContactsTab() {
   const [importOpen, setImportOpen] = useState(false);
   const [editing, setEditing] = useState<ContactDTO | null>(null);
   const [toDelete, setToDelete] = useState<ContactDTO | null>(null);
+  const [linkFor, setLinkFor] = useState<ContactDTO | null>(null);
+  const [viewing, setViewing] = useState<ContactDTO | null>(null);
 
   const debouncedSearch = useDebouncedValue(search.trim());
   const lists = useLists();
@@ -146,7 +186,8 @@ export function ContactsTab() {
                 <TableHead>Company</TableHead>
                 <TableHead>Lists</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-12">
+                <TableHead>Activity</TableHead>
+                <TableHead className="w-24">
                   <span className="sr-only">Actions</span>
                 </TableHead>
               </TableRow>
@@ -155,7 +196,7 @@ export function ContactsTab() {
               {contacts.isPending
                 ? Array.from({ length: 5 }, (_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: 6 }, (_, j) => (
+                      {Array.from({ length: 7 }, (_, j) => (
                         <TableCell key={j}>
                           <Skeleton className="h-5 w-full max-w-32" />
                         </TableCell>
@@ -164,7 +205,15 @@ export function ContactsTab() {
                   ))
                 : contacts.data?.data.map((contact) => (
                     <TableRow key={contact.id}>
-                      <TableCell className="font-medium">{contact.email}</TableCell>
+                      <TableCell className="font-medium">
+                        <button
+                          type="button"
+                          className="text-left hover:underline"
+                          onClick={() => setViewing(contact)}
+                        >
+                          {contact.email}
+                        </button>
+                      </TableCell>
                       <TableCell>
                         {[contact.firstName, contact.lastName].filter(Boolean).join(" ") || "—"}
                         {contact.title && (
@@ -187,6 +236,18 @@ export function ContactsTab() {
                         />
                       </TableCell>
                       <TableCell>
+                        <ActivityBadges contact={contact} />
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`Copy tracking link for ${contact.email}`}
+                          title="Copy tracking link"
+                          onClick={() => setLinkFor(contact)}
+                        >
+                          <LinkIcon />
+                        </Button>
                         <DropdownMenu>
                           <DropdownMenuTrigger
                             render={<Button variant="ghost" size="icon-sm" />}
@@ -195,6 +256,14 @@ export function ContactsTab() {
                             <MoreHorizontalIcon />
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => setViewing(contact)}>
+                              <HistoryIcon />
+                              Activity
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setLinkFor(contact)}>
+                              <LinkIcon />
+                              Copy link
+                            </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => setEditing(contact)}>
                               <PencilIcon />
                               Edit
@@ -243,6 +312,12 @@ export function ContactsTab() {
 
       <ImportWizard open={importOpen} onOpenChange={setImportOpen} />
       <EditContactDialog contact={editing} onClose={() => setEditing(null)} />
+      <CopyLinkDialog contact={linkFor} onClose={() => setLinkFor(null)} />
+      <ContactPanel
+        contact={viewing}
+        onClose={() => setViewing(null)}
+        onCopyLink={(c) => setLinkFor(c)}
+      />
 
       <AlertDialog open={!!toDelete} onOpenChange={(open) => !open && setToDelete(null)}>
         <AlertDialogContent>

@@ -19,6 +19,7 @@ export default defineConfig({
       APP_URL: "http://localhost:3000",
       JWT_SECRET: "test-only-jwt-secret-that-is-long-enough-123",
       ENCRYPTION_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      TRACKING_IP_SECRET: "test-only-tracking-ip-secret-long-enough-0123",
     },
   },
 });

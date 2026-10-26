@@ -1,11 +1,13 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/client/api";
 import { queryKeys } from "@/lib/client/query-keys";
 import type {
   ActivityDTO,
+  ClickersPeriod,
   DashboardCampaignDTO,
+  DashboardClickerDTO,
   DashboardInboxDTO,
   DashboardSummaryDTO,
   TimelineDayDTO,
@@ -40,6 +42,15 @@ export const useDashboardTimeline = (days = 14) =>
   useQuery({
     queryKey: queryKeys.dashboard.timeline(days),
     queryFn: () => apiFetch<TimelineDayDTO[]>(`/api/dashboard/timeline?days=${days}`),
+    ...live,
+  });
+
+export const useDashboardClickers = (period: ClickersPeriod) =>
+  useQuery({
+    queryKey: queryKeys.dashboard.clickers(period),
+    queryFn: () =>
+      apiFetch<DashboardClickerDTO[]>(`/api/dashboard/clickers?period=${period}&limit=10`),
+    placeholderData: keepPreviousData,
     ...live,
   });
 

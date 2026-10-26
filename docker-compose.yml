@@ -1,0 +1,68 @@
+# Outreach Engine with its own MongoDB. The image is built and pushed by GitHub Actions
+# (.github/workflows/docker.yml) — nothing is built here.
+#   docker login                                  once, if the Docker Hub repository is private
+#   docker compose pull && docker compose up -d   get the newest image and start everything
+#   IMAGE_TAG=sha-abc1234 docker compose up -d    run one exact build
+#   DOCKERHUB_NAMESPACE=other-account ...         if the image lives under another Docker Hub account
+#
+# Settings come from .env.local (same file as local development). MONGODB_URI is replaced below so the
+# containers use the MongoDB container, not the MongoDB installed on this computer.
+
+x-app: &app
+  image: docker.io/${DOCKERHUB_NAMESPACE:-gisul-docker}/outreach-engine:${IMAGE_TAG:-latest}
+  env_file: .env.local
+  environment:
+    MONGODB_URI: mongodb://mongo:27017/outreach
+  init: true
+  restart: unless-stopped
+
+services:
+  mongo:
+    image: mongo:8.0
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    # Only reachable from this computer (e.g. MongoDB Compass on mongodb://localhost:27018).
+    # 27018, not 27017: the MongoDB service installed on this computer already uses 27017.
+    ports:
+      - "127.0.0.1:27018:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # One-time step on every start: create/update indexes, create the admin user (safe to repeat).
+  setup:
+    <<: *app
+    command: ["sh", "-c", "npm run db:indexes && npm run seed"]
+    restart: "no"
+    healthcheck:
+      disable: true
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  web:
+    <<: *app
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: ["node_modules/.bin/tsx", "src/worker/index.ts"]
+    # The worker has no web server, so the image's website health check does not apply.
+    healthcheck:
+      disable: true
+    # Lets a send in progress finish before the container is killed (the worker waits up to 30 s).
+    stop_grace_period: 40s
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
+volumes:
+  mongo-data:

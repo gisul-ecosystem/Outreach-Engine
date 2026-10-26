@@ -1,7 +1,14 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ListIcon, MoreHorizontalIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import {
+  DownloadIcon,
+  ListIcon,
+  MoreHorizontalIcon,
+  PencilIcon,
+  PlusIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -126,6 +133,21 @@ export function ListsTab() {
                             <DropdownMenuItem onClick={() => openForm(list)}>
                               <PencilIcon />
                               Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                // A temporary download link: the browser saves the file (our login cookie goes with it).
+                                const a = document.createElement("a");
+                                a.href = `/api/lists/${list.id}/links.csv`;
+                                a.download = "";
+                                a.click();
+                                toast.success(
+                                  "Downloading one tracking link per contact (missing links are created).",
+                                );
+                              }}
+                            >
+                              <DownloadIcon />
+                              Download links (CSV)
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/client/api";
 import { ActivityFeed } from "./activity-feed";
 import { CampaignCards } from "./campaign-cards";
+import { ClickersCard } from "./clickers-card";
 import { InboxTable } from "./inbox-table";
 import { KpiCards } from "./kpi-cards";
 import { NextEmailCard } from "./next-email-card";
@@ -60,6 +61,8 @@ export function Dashboard() {
       </div>
 
       <InboxTable inboxes={inboxes.data} />
+
+      <ClickersCard />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">

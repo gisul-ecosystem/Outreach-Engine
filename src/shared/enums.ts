@@ -47,6 +47,23 @@ export const MESSAGE_STATUSES = [
 ] as const;
 export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
 
+/**
+ * Who sent an email found in an inbox's Sent Items folder:
+ * - manual: typed by hand in Outlook (no engine message matches it)
+ * - engine: sent by the worker for a campaign
+ */
+export const TRACKED_EMAIL_SOURCES = ["manual", "engine"] as const;
+export type TrackedEmailSource = (typeof TRACKED_EMAIL_SOURCES)[number];
+
+/**
+ * What a tracking-link click was judged to be:
+ * - click:      looks like a real person
+ * - suspicious: maybe a bot (too fast after sending, a burst, missing browser details)
+ * - bot:        certainly not a person (HEAD request, script, known scanner / link preview)
+ */
+export const CLICK_VERDICTS = ["click", "suspicious", "bot"] as const;
+export type ClickVerdict = (typeof CLICK_VERDICTS)[number];
+
 /** Defaults from BUILD_PLAN section 4 / 11. */
 export const DEFAULTS = {
   timezone: "Asia/Kolkata",

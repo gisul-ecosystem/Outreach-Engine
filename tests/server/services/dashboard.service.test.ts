@@ -1,8 +1,11 @@
+import { Types } from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { Campaign, Event, Inbox, Message } from "@/server/db/models";
+import { Campaign, Contact, Event, Inbox, LinkClick, Message } from "@/server/db/models";
+import type { ClickVerdict } from "@/shared/enums";
 import {
   getDashboardActivity,
   getDashboardCampaigns,
+  getDashboardClickers,
   getDashboardInboxes,
   getDashboardSummary,
   getDashboardTimeline,
@@ -83,6 +86,74 @@ describe("dashboard service", () => {
   it("nextEmail is null and workerRunning false on an empty system", async () => {
     const s = await getDashboardSummary(NOW);
     expect(s).toMatchObject({ sentToday: 0, inQueue: 0, nextEmail: null, workerRunning: false });
+  });
+
+  it("counts real tracking-link clicks this week (not bots, not last week)", async () => {
+    const contactId = new Types.ObjectId();
+    const click = (verdict: ClickVerdict, iso: string) => ({
+      linkId: new Types.ObjectId(),
+      token: "k7f2Qa9xLm_3",
+      contactId,
+      at: at(iso),
+      method: "GET",
+      verdict,
+    });
+    await LinkClick.create([
+      click("click", "2026-10-20T04:00:00Z"), // today
+      click("click", "2026-10-19T18:40:00Z"), // Monday 00:10 IST → this week
+      click("suspicious", "2026-10-20T04:00:00Z"),
+      click("bot", "2026-10-20T04:00:00Z"),
+      click("click", "2026-10-18T18:00:00Z"), // Sunday 23:30 IST → last week
+    ]);
+    expect((await getDashboardSummary(NOW)).realClicksThisWeek).toBe(2);
+  });
+
+  it("clicks per person: real clicks and bot opens counted separately, most real clicks first", async () => {
+    const [priya, rahul, anita] = await Contact.create([
+      { email: "priya@x.com", firstName: "Priya", lastName: "S", company: "Acme" },
+      { email: "rahul@x.com", firstName: "Rahul" },
+      { email: "anita@x.com" },
+    ]);
+    const click = (contactId: Types.ObjectId, verdict: ClickVerdict, iso: string) => ({
+      linkId: new Types.ObjectId(),
+      token: "k7f2Qa9xLm_3",
+      contactId,
+      at: at(iso),
+      method: "GET",
+      verdict,
+    });
+    await LinkClick.create([
+      click(priya._id, "click", "2026-10-20T04:00:00Z"),
+      click(priya._id, "click", "2026-10-20T05:00:00Z"),
+      click(priya._id, "bot", "2026-10-20T03:59:00Z"),
+      click(rahul._id, "click", "2026-10-19T19:00:00Z"),
+      click(rahul._id, "suspicious", "2026-10-19T19:00:05Z"),
+      click(anita._id, "bot", "2026-10-20T01:00:00Z"), // only a scanner
+      click(rahul._id, "click", "2026-10-12T06:00:00Z"), // last week
+      click(rahul._id, "click", "2026-10-13T06:00:00Z"), // last week
+    ]);
+
+    const week = await getDashboardClickers("week", 10, NOW);
+    expect(week.map((c) => [c.email, c.realClicks, c.botOpens])).toEqual([
+      ["priya@x.com", 2, 1],
+      ["rahul@x.com", 1, 1],
+      ["anita@x.com", 0, 1],
+    ]);
+    expect(week[0]).toMatchObject({
+      name: "Priya S",
+      company: "Acme",
+      lastRealClickAt: "2026-10-20T05:00:00.000Z",
+    });
+    expect(week[2].lastRealClickAt).toBeNull();
+
+    // All time: Rahul's 2 clicks from last week count too → he is first.
+    const all = await getDashboardClickers("all", 10, NOW);
+    expect(all.map((c) => [c.email, c.realClicks])).toEqual([
+      ["rahul@x.com", 3],
+      ["priya@x.com", 2],
+      ["anita@x.com", 0],
+    ]);
+    expect(await getDashboardClickers("all", 1, NOW)).toHaveLength(1);
   });
 
   it("inboxes: sent today, limit, last sent and next scheduled per inbox", async () => {

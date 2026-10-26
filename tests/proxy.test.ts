@@ -42,6 +42,34 @@ describe("proxy (route protection)", () => {
     },
   );
 
+  it.each(["/r/k7f2Qa9xLm_3", "/r/anything"])(
+    "lets the public tracking link %s through without login",
+    async (path) => {
+      expect(isPassThrough(await proxy(request(path)))).toBe(true);
+    },
+  );
+
+  // Only the /r/ prefix is public: everything else still needs a login.
+  it.each(["/r", "/redirect", "/reports", "/sent", "/contacts", "/rr/abc"])(
+    "still redirects %s to /login when logged out",
+    async (path) => {
+      expect((await proxy(request(path))).status).toBe(307);
+    },
+  );
+
+  it.each([
+    "/api/r/abc",
+    "/api/contacts/652f0c0c0c0c0c0c0c0c0c0c/links",
+    "/api/lists/652f0c0c0c0c0c0c0c0c0c0c/links.csv",
+    "/api/tracking/clicks",
+    "/api/dashboard/clickers",
+    "/api/tracking/config",
+    "/api/sent-emails",
+    "/api/sent-emails/stats",
+  ])("still returns 401 for %s when logged out", async (path) => {
+    expect((await proxy(request(path))).status).toBe(401);
+  });
+
   it("shows /login when logged out", async () => {
     expect(isPassThrough(await proxy(request("/login")))).toBe(true);
   });

@@ -219,13 +219,15 @@ inboxes, the domains' DNS, the `Mail.Read` permission and whether you sent yours
 
 ## The worker (the background sender)
 
-`npm run worker` runs three repeating jobs in one separate process:
+`npm run worker` runs these repeating jobs in one separate process:
 
-| Job      | Every | What it does                                                                       |
-| -------- | ----- | ---------------------------------------------------------------------------------- |
-| Planner  | 30 s  | For each running campaign, picks the next email for each inbox and gives it a time |
-| Sender   | 10 s  | Sends the emails whose time has come (different inboxes at the same time)          |
-| Recovery | 60 s  | Marks emails stuck in `sending` (worker crashed) as `failed / UNKNOWN_STATE`       |
+| Job        | Every | What it does                                                                                                         |
+| ---------- | ----- | -------------------------------------------------------------------------------------------------------------------- |
+| Planner    | 30 s  | For each running campaign, picks the next email for each inbox and gives it a time                                   |
+| Sender     | 10 s  | Sends the emails whose time has come (different inboxes at the same time)                                            |
+| Recovery   | 60 s  | Marks emails stuck in `sending` (worker crashed) as `failed / UNKNOWN_STATE`                                         |
+| Mailbox    | 5 min | Bounces and replies for the engine's own emails (live mode only)                                                     |
+| Sent Items | 5 min | Every email sent from each inbox (also typed by hand in Outlook), replies to them, tracking links in them. Read-only |
 
 - **Only one worker can run.** It holds a lock in the database (renewed every tick). A second `npm run worker`
   prints "another worker is already running" and exits. After a crash the lock frees itself within 90 seconds.
@@ -245,24 +247,116 @@ emails in flight per inbox, the smallest gap between sends, sends outside the wi
 It also tests pausing a campaign, killing the worker in the middle of a send, and starting a second worker.
 Run one part only with `npm run simulate -- main|window|pause|crash`.
 
+## Click tracking (who clicked the link in my hand-written email)
+
+Every contact gets their own link, e.g. `https://go.racko.ai/r/k7f2Qa9xLm_3`. The random part (the
+**token**) tells the engine whose link it is — it contains no name or email. When someone opens it, the engine
+saves the click, judges whether a person or a security scanner opened it, and sends the browser on to racko.ai
+in a fraction of a second.
+
+### Settings (`.env.local`)
+
+| Variable                 | Example                 | What it is                                                                                    |
+| ------------------------ | ----------------------- | --------------------------------------------------------------------------------------------- |
+| `TRACKING_BASE_URL`      | `https://go.racko.ai`   | Start of every link. `http://localhost:3000` while testing on this computer                   |
+| `TRACKING_ALLOWED_HOSTS` | `racko.ai,www.racko.ai` | The ONLY sites a link may lead to (stops scammers using our links to send people elsewhere)   |
+| `TRACKING_FALLBACK_URL`  | `https://racko.ai`      | Where unknown links — and any error — go. People never see an error page                      |
+| `TRACKING_IP_SECRET`     | 32+ random characters   | Key that scrambles visitor IP addresses (HMAC). Raw IPs are never stored                      |
+| `TRUST_PROXY`            | `false`                 | `true` only when the engine runs behind Nginx or Cloudflare                                   |
+| `MAILBOX_READING`        | `true`                  | Reading Sent Items + replies (read-only, also in DRY_RUN). `npm run simulate` switches it off |
+
+Make a secret with `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`.
+Restart the website and the worker after changing `.env.local`.
+
+### Putting a link into an email
+
+1. **Contacts** → the link icon next to a person (or open the person → **Copy link**).
+2. Leave the destination empty for the homepage, or type a path like `/pricing`. Choose the link words
+   (default "take a look at Racko").
+3. **Copy link**, then paste into your Outlook email: Outlook shows the words with the link behind them.
+   (The copy holds two versions: a "rich" one for Outlook and the plain address for anything else.)
+4. Copying again gives the **same** link. Tick "Make a new link" for a fresh one (the old one keeps working).
+
+For a whole list: **Contacts → Lists → ⋯ → Download links (CSV)** (email, name, company, status, link).
+Use each person's own link only in the email to that person. The engine finds the links in your Sent Items and
+shows a red **Wrong link** warning when one person's link was pasted into an email to someone else (their clicks
+would count for the wrong person).
+
+### Real click vs. maybe a bot
+
+Company email security (Microsoft Defender Safe Links, Mimecast, Proofpoint, Barracuda, Gmail) often opens every
+link by itself seconds after the email arrives. So each click gets a verdict, with the reason in plain English:
+
+- ✅ **Real click** — looks like a person.
+- ⚠️ **Maybe a bot** — e.g. opened within 60 seconds of sending, opened 3+ times in 10 seconds, the same visitor
+  opened several people's links, or the browser left out details real browsers always send.
+- 🤖 **Bot** — a HEAD request (like `curl -I`), no browser name, a script, or a known scanner / link preview.
+  The list of known scanners is `src/server/tracking/scanners.ts` (one line per scanner).
+
+Some scanners pretend to be a normal browser, so a few may still show as real clicks. A click opened before the
+engine knew when the email was sent is judged again once the email is found in Sent Items.
+See them under **Sent emails → Link clicks**, on each person's timeline, and on the dashboard: "Real clicks this
+week" and the **Clicks per person** table (real clicks and bot opens per person, this week or all time).
+Clicks are kept for one year.
+
+### Going live (needed before real people's clicks work)
+
+While `TRACKING_BASE_URL` is `localhost`, links only open on this computer (the app shows a yellow banner).
+For the people you email, the engine must be on the internet over HTTPS, 24/7:
+
+- **Recommended:** a small VPS (e.g. Hetzner ~€4.5/month, DigitalOcean/Lightsail ~$6/month) with Nginx and a
+  free Let's Encrypt certificate (Phase 8). Point `go.racko.ai` at it in the racko.ai DNS settings, then set
+  `TRACKING_BASE_URL=https://go.racko.ai` and `TRUST_PROXY=true`.
+- A Cloudflare Tunnel from this PC is quicker but links break whenever the PC is off or asleep.
+
+## Docker
+
+Local development stays as above (no Docker). Docker is for running the engine on a server.
+
+- **Image:** GitHub Actions (`.github/workflows/docker.yml`) builds it and pushes it to Docker Hub as
+  `gisul-docker/outreach-engine` on every push to `main` (tags `latest` and `sha-<commit>`) and on version
+  tags `v1.2.3`. Pull requests only check that the image still builds. The workflow needs, under GitHub →
+  Settings → Secrets and variables → Actions: secrets `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN`
+  (a Docker Hub access token with Read & Write), and optionally the variable `DOCKERHUB_NAMESPACE`
+  (default `gisul-docker`).
+- **One image, two jobs:** the website (`next start`, the default command) and the worker
+  (`tsx src/worker/index.ts`).
+- **`docker-compose.yml`** starts `mongo` (MongoDB 8, data kept in the `mongo-data` volume), a one-time
+  `setup` step (`db:indexes` + `seed`), then `web` and `worker`. Settings come from `.env.local`;
+  `MONGODB_URI` is replaced so the containers use the MongoDB container.
+
+```bash
+docker login                            # only if the Docker Hub repository is private
+docker compose pull
+docker compose up -d                    # website on http://localhost:3000 (WEB_PORT=8080 to change)
+docker compose logs -f worker           # watch the worker
+docker compose down                     # stop (data stays in the mongo-data volume)
+docker compose run --rm web npm run sent:check   # any script from the table below
+```
+
+The container MongoDB is reachable from this computer only, on port **27018** (e.g. MongoDB Compass:
+`mongodb://localhost:27018/outreach`). Port 27017 is left for the MongoDB service installed on Windows.
+
 ## Scripts
 
-| Command                 | What it does                                                                                                                                                              |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run dev:all`       | Website and worker together (use this for daily work)                                                                                                                     |
-| `npm run dev`           | Website only (http://localhost:3000)                                                                                                                                      |
-| `npm run worker`        | Worker only (the background sender). Stop with Ctrl+C                                                                                                                     |
-| `npm run typecheck`     | TypeScript type check                                                                                                                                                     |
-| `npm run lint`          | ESLint (also blocks importing server code into client code)                                                                                                               |
-| `npm test`              | Unit tests (vitest)                                                                                                                                                       |
-| `npm run build`         | Production build                                                                                                                                                          |
-| `npm start`             | Run the production build (after `npm run build`)                                                                                                                          |
-| `npm run seed`          | Create the admin user + settings (safe to repeat)                                                                                                                         |
-| `npm run db:indexes`    | Make MongoDB indexes match the models (safe to repeat)                                                                                                                    |
-| `npm run simulate`      | Dry-run simulation of the worker in a separate database                                                                                                                   |
-| `npm run email:test`    | Show exactly what goes to Microsoft for a campaign (Outlook JSON or raw MIME); `--send --yes` sends it to test addresses; `--format outlook\|mime` tries the other format |
-| `npm run mailbox:check` | Look for bounce reports / replies in the sending inboxes now                                                                                                              |
-| `npm run format`        | Format all files with Prettier                                                                                                                                            |
+| Command                    | What it does                                                                                                                                                              |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev:all`          | Website and worker together (use this for daily work)                                                                                                                     |
+| `npm run dev`              | Website only (http://localhost:3000)                                                                                                                                      |
+| `npm run worker`           | Worker only (the background sender). Stop with Ctrl+C                                                                                                                     |
+| `npm run typecheck`        | TypeScript type check                                                                                                                                                     |
+| `npm run lint`             | ESLint (also blocks importing server code into client code)                                                                                                               |
+| `npm test`                 | Unit tests (vitest)                                                                                                                                                       |
+| `npm run build`            | Production build                                                                                                                                                          |
+| `npm start`                | Run the production build (after `npm run build`)                                                                                                                          |
+| `npm run seed`             | Create the admin user + settings (safe to repeat)                                                                                                                         |
+| `npm run db:indexes`       | Make MongoDB indexes match the models (safe to repeat)                                                                                                                    |
+| `npm run simulate`         | Dry-run simulation of the worker in a separate database                                                                                                                   |
+| `npm run email:test`       | Show exactly what goes to Microsoft for a campaign (Outlook JSON or raw MIME); `--send --yes` sends it to test addresses; `--format outlook\|mime` tries the other format |
+| `npm run mailbox:check`    | Look for bounce reports / replies in the sending inboxes now                                                                                                              |
+| `npm run sent:check`       | Read every inbox's Sent Items + replies now (hand-sent emails, tracking links) and print today / week / month counts                                                      |
+| `npm run tracking:rebuild` | Recalculate every contact's emailed / replied / clicked numbers and every link's click counters                                                                           |
+| `npm run format`           | Format all files with Prettier                                                                                                                                            |
 
 ## Project layout
 

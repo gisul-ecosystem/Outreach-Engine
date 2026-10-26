@@ -44,6 +44,23 @@ export type SentEmail = {
   sentAt: Date;
 };
 
+/** An email in Sent Items with every recipient (to track emails sent by hand from Outlook). */
+export type SentItem = {
+  id: string;
+  internetMessageId: string;
+  conversationId: string | null;
+  subject: string;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  sentAt: Date;
+  /** Tracking-link tokens (…/r/<token>) found in the body. The body itself is not kept. */
+  linkTokens: string[];
+};
+
+/** One page run of Sent Items, oldest first. `complete` = false when the page cap was hit (more remain). */
+export type SentItemsPage = { items: SentItem[]; complete: boolean };
+
 export type CheckResult = { ok: boolean; error?: string };
 
 /** A mailbox found in the provider's directory (e.g. a Microsoft 365 user). */
@@ -60,6 +77,8 @@ export type ReceivedEmail = {
   body: string;
   /** Only the new part of a reply, without the quoted earlier email. */
   uniqueBody: string;
+  /** Graph's thread id: a reply has the same one as the email it answers. */
+  conversationId?: string | null;
 };
 
 export interface EmailProvider {
@@ -71,6 +90,8 @@ export interface EmailProvider {
   listReceivedEmails(mailbox: string, since: Date): Promise<ReceivedEmail[]>;
   /** Emails in the mailbox's Sent Items folder sent since `since` (newest first). Read-only. */
   listSentEmails?(mailbox: string, since: Date): Promise<SentEmail[]>;
+  /** Sent Items sent from `since` up to `until`, OLDEST first, with To/CC/BCC. Read-only. */
+  listSentItems?(mailbox: string, since: Date, until: Date): Promise<SentItemsPage>;
   /** Application permissions granted to the app (e.g. ["Mail.Send", "Mail.Read"]); null = unknown. */
   grantedPermissions?(): Promise<string[] | null>;
   send(input: SendInput): Promise<SendResult>;
