@@ -314,11 +314,11 @@ For the people you email, the engine must be on the internet over HTTPS, 24/7:
 Local development stays as above (no Docker). Docker is for running the engine on a server.
 
 - **Image:** GitHub Actions (`.github/workflows/docker.yml`) builds it and pushes it to Docker Hub as
-  `gisul-docker/outreach-engine` on every push to `main` (tags `latest` and `sha-<commit>`) and on version
+  `gisuldocker/outreach-engine` on every push to `main` (tags `latest` and `sha-<commit>`) and on version
   tags `v1.2.3`. Pull requests only check that the image still builds. The workflow needs, under GitHub →
   Settings → Secrets and variables → Actions: secrets `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN`
   (a Docker Hub access token with Read & Write), and optionally the variable `DOCKERHUB_NAMESPACE`
-  (default `gisul-docker`).
+  (default `gisuldocker`).
 - **One image, two jobs:** the website (`next start`, the default command) and the worker
   (`tsx src/worker/index.ts`).
 - **`docker-compose.yml`** starts `mongo` (MongoDB 8, data kept in the `mongo-data` volume), a one-time

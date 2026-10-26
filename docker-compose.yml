@@ -9,7 +9,7 @@
 # containers use the MongoDB container, not the MongoDB installed on this computer.
 
 x-app: &app
-  image: docker.io/${DOCKERHUB_NAMESPACE:-gisul-docker}/outreach-engine:${IMAGE_TAG:-latest}
+  image: docker.io/${DOCKERHUB_NAMESPACE:-gisuldocker}/outreach-engine:${IMAGE_TAG:-latest}
   env_file: .env.local
   environment:
     MONGODB_URI: mongodb://mongo:27017/outreach
