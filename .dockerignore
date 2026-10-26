@@ -5,6 +5,8 @@
 *.pem
 *.key
 *.csv
+# route folders such as src/app/api/lists/[id]/links.csv/ are code, not data
+!src/app/**/*.csv
 dump/
 backups/
 tmp/

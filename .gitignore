@@ -47,6 +47,8 @@ desktop.ini
 # local data and scratch files (real contact exports, database dumps, temp scripts)
 *.csv
 !samples/*.csv
+# route folders such as src/app/api/lists/[id]/links.csv/ are code, not data
+!/src/app/**/*.csv
 dump/
 backups/
 tmp/
