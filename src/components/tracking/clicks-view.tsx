@@ -42,7 +42,7 @@ export function ClicksView() {
     try {
       // Fetch all clicks data (not paginated) for export
       const response = await fetch(
-        `/api/dashboard/clickers?include=${include}&limit=100000&page=1`,
+        `/api/tracking/clicks?include=${include}&limit=100000&page=1`,
       );
       if (!response.ok) throw new Error("Failed to fetch clicks data");
 
