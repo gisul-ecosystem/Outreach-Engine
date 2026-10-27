@@ -47,9 +47,12 @@ export function ClicksView() {
     { value: "", label: "All lists" },
     ...(lists.data?.data ?? []).map((list) => ({
       value: list.id,
-      label: list.name,
+      label: `${list.name} (${list.contactCount || 0} contacts)`,
     })),
   ];
+
+  // Debug: Log lists data
+  console.log("Lists loaded:", lists.data?.data?.length, lists.data?.data);
 
   const handleExportCsv = async () => {
     if (!clicks.data) return;
@@ -144,15 +147,24 @@ export function ClicksView() {
           }}
           options={FILTERS}
         />
-        <SimpleSelect
-          className="w-56"
-          value={selectedListId}
-          onChange={(v) => {
-            setSelectedListId(v);
-            setPage(1);
-          }}
-          options={listOptions}
-        />
+        <div className="flex flex-col">
+          <SimpleSelect
+            className="w-64"
+            value={selectedListId}
+            onChange={(v) => {
+              setSelectedListId(v);
+              setPage(1);
+            }}
+            options={listOptions}
+            disabled={lists.isPending}
+          />
+          {lists.isPending && (
+            <span className="text-xs text-muted-foreground mt-1">Loading lists...</span>
+          )}
+          {!lists.isPending && lists.data?.data && lists.data.data.length === 0 && (
+            <span className="text-xs text-muted-foreground mt-1">No lists found</span>
+          )}
+        </div>
         <span className="text-sm text-muted-foreground">
           {clicks.data ? `${total.toLocaleString()} click(s)` : " "}
         </span>
