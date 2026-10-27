@@ -2,6 +2,7 @@
 
 import { Download, MousePointerClickIcon } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import { SimpleSelect } from "@/components/common/simple-select";
 import { EmptyState } from "@/components/layout/empty-state";
 import { Button } from "@/components/ui/button";
@@ -14,13 +15,22 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatDateTime } from "@/lib/client/format";
 import { useLists } from "@/components/contacts/use-contacts";
-import type { ClickFilter } from "@/shared/tracking";
+import { apiFetchPage, errorMessage } from "@/lib/client/api";
+import { formatDateTime } from "@/lib/client/format";
+import { type ClickFilter, type LinkClickDTO, VERDICT_LABELS } from "@/shared/tracking";
 import { useClicks } from "./use-tracking";
 import { VerdictBadge } from "./verdict-badge";
 
 const PAGE_SIZE = 25;
+/** Biggest `limit` the list endpoints accept (paginationSchema). */
+const MAX_PAGE_LIMIT = 100;
+
+/** Quotes a CSV cell when needed; a leading = + - @ is defused so Excel doesn't run it as a formula. */
+function csvCell(value: string): string {
+  const safe = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
 const FILTERS: { value: ClickFilter; label: string }[] = [
   { value: "real", label: "Real clicks only" },
   { value: "real-and-maybe", label: "Real + maybe a bot" },
@@ -33,7 +43,8 @@ export function ClicksView() {
   const [page, setPage] = useState(1);
   const [isExporting, setIsExporting] = useState(false);
   const [selectedListId, setSelectedListId] = useState<string>("");
-  const lists = useLists({ page: 1, limit: 1000 });
+  // The API allows at most 100 per page (a bigger limit is rejected and no list shows up).
+  const lists = useLists({ page: 1, limit: MAX_PAGE_LIMIT });
   const clicks = useClicks({
     page,
     limit: PAGE_SIZE,
@@ -47,89 +58,54 @@ export function ClicksView() {
     { value: "", label: "All lists" },
     ...(lists.data?.data ?? []).map((list) => ({
       value: list.id,
-      label: `${list.name} (${list.contactCount || 0} contacts)`,
+      label: `${list.name} (${list.contactCount} contacts)`,
     })),
   ];
 
-  // Debug: Log lists data
-  console.log("Lists loaded:", lists.data?.data?.length, lists.data?.data);
-
   const handleExportCsv = async () => {
-    if (!clicks.data) return;
-
     setIsExporting(true);
     try {
-      // Fetch all clicks data by handling pagination (API max limit is 100)
-      const allClicks: any[] = [];
-      let page = 1;
-      let hasMore = true;
-
-      while (hasMore) {
+      // Every click for the current filters, a page at a time.
+      const allClicks: LinkClickDTO[] = [];
+      for (let p = 1; ; p++) {
         const params = new URLSearchParams({
           include,
-          limit: "100",
-          page: String(page),
+          limit: String(MAX_PAGE_LIMIT),
+          page: String(p),
           ...(selectedListId && { listId: selectedListId }),
         });
-        const response = await fetch(`/api/tracking/clicks?${params}`);
-        if (!response.ok) throw new Error("Failed to fetch clicks data");
-
-        const data = await response.json();
-        if (!data.data || data.data.length === 0) {
-          hasMore = false;
-        } else {
-          allClicks.push(...data.data);
-          page++;
-        }
+        const result = await apiFetchPage<LinkClickDTO>(`/api/tracking/clicks?${params}`);
+        allClicks.push(...result.data);
+        if (result.data.length < MAX_PAGE_LIMIT || allClicks.length >= result.total) break;
       }
 
-      const clicksData = allClicks;
-
-      // Prepare CSV content
-      const headers = [
-        "When",
-        "Contact Name",
-        "Contact Email",
-        "Verdict",
-        "Reasons",
-        "Destination URL",
-      ];
-
-      const rows = clicksData.map((click: any) => [
+      const headers = ["When", "Contact Name", "Contact Email", "Verdict", "Reasons", "Destination URL"];
+      const rows = allClicks.map((click) => [
         formatDateTime(click.at),
-        click.contact?.name || "",
-        click.contact?.email || "",
-        click.verdict,
+        click.contact?.name ?? "",
+        click.contact?.email ?? "",
+        VERDICT_LABELS[click.verdict],
         click.reasons.join("; "),
         click.destinationUrl,
       ]);
+      const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
 
-      // Escape CSV fields
-      const escapeCsv = (field: string) => {
-        if (typeof field !== "string") return field;
-        if (field.includes(",") || field.includes('"') || field.includes("\n")) {
-          return `"${field.replace(/"/g, '""')}"`;
-        }
-        return field;
-      };
-
-      const csvContent = [
-        headers.map(escapeCsv).join(","),
-        ...rows.map((row: any[]) => row.map(escapeCsv).join(",")),
-      ].join("\n");
-
-      // Download CSV
       const listName = selectedListId
-        ? lists.data?.data.find((l) => l.id === selectedListId)?.name || "list"
+        ? (lists.data?.data.find((l) => l.id === selectedListId)?.name ?? "list")
         : "all-lists";
-      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = `link-clicks-${listName}-${new Date().toISOString().split("T")[0]}.csv`;
-      link.click();
-    } catch (error) {
-      console.error("Export failed:", error);
-      alert("Failed to export clicks data");
+      const slug = listName.replace(/[^\w-]+/g, "-").replace(/^-+|-+$/g, "") || "list";
+      // The BOM makes Excel read names with accents correctly.
+      const url = URL.createObjectURL(new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `link-clicks-${slug}-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      toast.success(`Exported ${allClicks.length.toLocaleString()} click(s)`);
+    } catch (err) {
+      toast.error(errorMessage(err));
     } finally {
       setIsExporting(false);
     }
@@ -161,7 +137,12 @@ export function ClicksView() {
           {lists.isPending && (
             <span className="text-xs text-muted-foreground mt-1">Loading lists...</span>
           )}
-          {!lists.isPending && lists.data?.data && lists.data.data.length === 0 && (
+          {lists.isError && (
+            <span className="text-xs text-destructive mt-1">
+              Could not load lists: {errorMessage(lists.error)}
+            </span>
+          )}
+          {lists.data?.data.length === 0 && (
             <span className="text-xs text-muted-foreground mt-1">No lists found</span>
           )}
         </div>
