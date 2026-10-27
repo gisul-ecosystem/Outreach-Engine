@@ -90,7 +90,11 @@ const FIELD_WORDS: Record<string, string> = {
 // {{ name }} or {{ name | fallback }} — the same syntax the server's renderer understands.
 const VARIABLE = /\{\{\s*([^{}|]*?)\s*(?:\|([^{}]*))?\}\}/g;
 const squash = (name: string) => name.toLowerCase().replace(/[\s_-]/g, "");
-const STANDARD = new Map<string, string>(STANDARD_VARIABLES.map((v) => [squash(v), v]));
+const STANDARD = new Map<string, string>([
+  ...STANDARD_VARIABLES.map((v) => [squash(v), v] as [string, string]),
+  ["fullname", "fullName"],
+  ["name", "name"],
+]);
 const SENDER = new Map<string, string>(SENDER_VARIABLES.map((v) => [squash(v), v]));
 
 const GREETING = /^(hi|hello|hey|dear|good (morning|afternoon|evening)|greetings|namaste|hola)\b/i;

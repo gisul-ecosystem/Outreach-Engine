@@ -57,7 +57,17 @@ type Lookup =
   | { kind: "unknown" };
 
 function lookup(name: string, contact: TemplateContact, sender: TemplateSender): Lookup {
-  const standard = standardByName.get(squash(name));
+  const squashed = squash(name);
+  if (squashed === "fullname" || squashed === "name") {
+    const full = [contact.firstName, contact.lastName]
+      .filter(Boolean)
+      .map((s) => s?.trim())
+      .filter(Boolean)
+      .join(" ");
+    return { kind: "known", value: full };
+  }
+
+  const standard = standardByName.get(squashed);
   if (standard) return { kind: "known", value: (contact[standard] ?? "").trim() };
 
   const senderField = senderByName.get(squash(name));
@@ -148,9 +158,12 @@ export function listVariables(template: string): string[] {
 
 /** True for names the renderer understands (standard fields, sender fields and custom.<key>). */
 export function isKnownVariable(name: string): boolean {
+  const sq = squash(name);
   return (
-    standardByName.has(squash(name)) ||
-    senderByName.has(squash(name)) ||
+    sq === "fullname" ||
+    sq === "name" ||
+    standardByName.has(sq) ||
+    senderByName.has(sq) ||
     (name.toLowerCase().startsWith("custom.") && name.length > "custom.".length)
   );
 }

@@ -50,6 +50,15 @@ describe("renderTemplate", () => {
     expect(renderTemplate("{{ firstName }} / {{FIRSTNAME}}", ann).output).toBe("Ann / Ann");
   });
 
+  it("replaces fullName or name with firstName and lastName combined", () => {
+    expect(renderTemplate("Hi {{fullName|there}},", ann).output).toBe("Hi Ann Lee,");
+    expect(renderTemplate("Hi {{name|there}},", ann).output).toBe("Hi Ann Lee,");
+    expect(renderTemplate("Hi {{fullName|there}},", { email: "a@b.com", firstName: "Ann" }).output).toBe(
+      "Hi Ann,",
+    );
+    expect(renderTemplate("Hi {{fullName|there}},", empty).output).toBe("Hi there,");
+  });
+
   it("uses the fallback when the value is empty — without a warning", () => {
     const r = renderTemplate("Hi {{firstName|there}},", empty);
     expect(r.output).toBe("Hi there,");
