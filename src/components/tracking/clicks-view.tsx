@@ -40,14 +40,27 @@ export function ClicksView() {
 
     setIsExporting(true);
     try {
-      // Fetch all clicks data (not paginated) for export
-      const response = await fetch(
-        `/api/tracking/clicks?include=${include}&limit=100000&page=1`,
-      );
-      if (!response.ok) throw new Error("Failed to fetch clicks data");
+      // Fetch all clicks data by handling pagination (API max limit is 100)
+      const allClicks: any[] = [];
+      let page = 1;
+      let hasMore = true;
 
-      const data = await response.json();
-      const clicksData = data.data || [];
+      while (hasMore) {
+        const response = await fetch(
+          `/api/tracking/clicks?include=${include}&limit=100&page=${page}`,
+        );
+        if (!response.ok) throw new Error("Failed to fetch clicks data");
+
+        const data = await response.json();
+        if (!data.data || data.data.length === 0) {
+          hasMore = false;
+        } else {
+          allClicks.push(...data.data);
+          page++;
+        }
+      }
+
+      const clicksData = allClicks;
 
       // Prepare CSV content
       const headers = [
