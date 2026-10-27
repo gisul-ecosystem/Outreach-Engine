@@ -329,6 +329,14 @@ export async function listClicks(query: ListClicksQuery): Promise<Paginated<Link
     };
   }
   if (query.contactId) filter.contactId = new Types.ObjectId(query.contactId);
+  if (query.listId) {
+    // Get all contact IDs from this list
+    const contactIds = await Contact.distinct("_id", {
+      listIds: new Types.ObjectId(query.listId),
+      deletedAt: null,
+    });
+    filter.contactId = { $in: contactIds };
+  }
   if (query.inboxId) {
     filter.token = {
       $in: await TrackedEmail.distinct("tokens", { inboxId: new Types.ObjectId(query.inboxId) }),
