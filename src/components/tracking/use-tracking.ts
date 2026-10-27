@@ -56,6 +56,7 @@ export function useClicks(params: {
   limit: number;
   include: ClickFilter;
   inboxId?: string;
+  listId?: string;
   from?: string;
   to?: string;
 }) {

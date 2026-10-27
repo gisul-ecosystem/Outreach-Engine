@@ -44,7 +44,7 @@ export type TrackingDomainDTO = { id: string; name: string; trackingHost: string
 export const CLICK_FILTERS = ["real", "real-and-maybe", "all"] as const;
 export type ClickFilter = (typeof CLICK_FILTERS)[number];
 
-/** `GET /api/tracking/clicks?include=real&from=…&to=…&inboxId=…&contactId=…` */
+/** `GET /api/tracking/clicks?include=real&from=…&to=…&inboxId=…&contactId=…&listId=…` */
 export const listClicksQuerySchema = paginationSchema.extend({
   /** real = real people only; real-and-maybe = also "maybe a bot"; all = bots too. */
   include: z.enum(CLICK_FILTERS).default("real"),
@@ -52,6 +52,8 @@ export const listClicksQuerySchema = paginationSchema.extend({
   to: z.coerce.date().optional(),
   /** Only clicks on links that were emailed from this inbox. */
   inboxId: objectIdSchema.optional(),
+  /** Only clicks from contacts in this list. */
+  listId: objectIdSchema.optional(),
   contactId: objectIdSchema.optional(),
 });
 export type ListClicksQuery = z.infer<typeof listClicksQuerySchema>;

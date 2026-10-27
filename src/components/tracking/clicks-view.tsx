@@ -15,6 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDateTime } from "@/lib/client/format";
+import { useLists } from "@/components/contacts/use-contacts";
 import type { ClickFilter } from "@/shared/tracking";
 import { useClicks } from "./use-tracking";
 import { VerdictBadge } from "./verdict-badge";
@@ -31,9 +32,24 @@ export function ClicksView() {
   const [include, setInclude] = useState<ClickFilter>("real");
   const [page, setPage] = useState(1);
   const [isExporting, setIsExporting] = useState(false);
-  const clicks = useClicks({ page, limit: PAGE_SIZE, include });
+  const [selectedListId, setSelectedListId] = useState<string>("");
+  const lists = useLists({ page: 1, limit: 1000 });
+  const clicks = useClicks({
+    page,
+    limit: PAGE_SIZE,
+    include,
+    ...(selectedListId && { listId: selectedListId }),
+  });
   const total = clicks.data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const listOptions = [
+    { value: "", label: "All lists" },
+    ...(lists.data?.data ?? []).map((list) => ({
+      value: list.id,
+      label: list.name,
+    })),
+  ];
 
   const handleExportCsv = async () => {
     if (!clicks.data) return;
@@ -46,9 +62,13 @@ export function ClicksView() {
       let hasMore = true;
 
       while (hasMore) {
-        const response = await fetch(
-          `/api/tracking/clicks?include=${include}&limit=100&page=${page}`,
-        );
+        const params = new URLSearchParams({
+          include,
+          limit: "100",
+          page: String(page),
+          ...(selectedListId && { listId: selectedListId }),
+        });
+        const response = await fetch(`/api/tracking/clicks?${params}`);
         if (!response.ok) throw new Error("Failed to fetch clicks data");
 
         const data = await response.json();
@@ -96,10 +116,13 @@ export function ClicksView() {
       ].join("\n");
 
       // Download CSV
+      const listName = selectedListId
+        ? lists.data?.data.find((l) => l.id === selectedListId)?.name || "list"
+        : "all-lists";
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
-      link.download = `link-clicks-${include}-${new Date().toISOString().split("T")[0]}.csv`;
+      link.download = `link-clicks-${listName}-${new Date().toISOString().split("T")[0]}.csv`;
       link.click();
     } catch (error) {
       console.error("Export failed:", error);
@@ -120,6 +143,15 @@ export function ClicksView() {
             setPage(1);
           }}
           options={FILTERS}
+        />
+        <SimpleSelect
+          className="w-56"
+          value={selectedListId}
+          onChange={(v) => {
+            setSelectedListId(v);
+            setPage(1);
+          }}
+          options={listOptions}
         />
         <span className="text-sm text-muted-foreground">
           {clicks.data ? `${total.toLocaleString()} click(s)` : " "}
