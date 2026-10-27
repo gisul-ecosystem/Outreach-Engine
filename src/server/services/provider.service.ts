@@ -13,7 +13,13 @@ import {
 import { logEvent } from "@/server/services/event.service";
 import { releaseScheduledMessages } from "@/server/services/queue.service";
 import type { Paginated } from "@/shared/common";
-import type { ProviderStatus, ProviderType, SendFormat } from "@/shared/enums";
+import {
+  DEFAULT_ZEPTO_REGION,
+  type ProviderStatus,
+  type ProviderType,
+  type SendFormat,
+  type ZeptoRegion,
+} from "@/shared/enums";
 import type { ProviderDTO } from "@/shared/provider";
 
 type ProviderRecord = ProviderConnectionDoc & {
@@ -35,6 +41,8 @@ function toDTO(p: ProviderRecord, inboxCount: number, secretSet: boolean): Provi
     lastError: p.lastError ?? null,
     sendFormat: sendFormatOf(p),
     grantedPermissions: p.grantedPermissions ? [...p.grantedPermissions] : null,
+    region:
+      p.type === "zeptomail" ? ((p.region as ZeptoRegion | null) ?? DEFAULT_ZEPTO_REGION) : null,
     inboxCount,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
@@ -91,15 +99,31 @@ export async function getProviderConnection(id: string): Promise<ProviderDTO> {
   return dto(await findWithSecretOr404(id));
 }
 
-export async function createProviderConnection(input: {
-  name: string;
-  type: "microsoft";
-  tenantId: string;
-  clientId: string;
-  clientSecret: string;
-  sendFormat?: SendFormat;
-}): Promise<ProviderDTO> {
+export async function createProviderConnection(
+  input:
+    | {
+        name: string;
+        type: "microsoft";
+        tenantId: string;
+        clientId: string;
+        clientSecret: string;
+        sendFormat?: SendFormat;
+      }
+    | { name: string; type: "zeptomail"; region: ZeptoRegion; apiToken: string },
+): Promise<ProviderDTO> {
   await connectDB();
+  if (input.type === "zeptomail") {
+    // The Send Mail token is kept in the same encrypted, never-returned field as Microsoft's secret.
+    const created = await ProviderConnection.create({
+      name: input.name,
+      type: "zeptomail",
+      region: input.region,
+      clientSecretEnc: encrypt(input.apiToken),
+      status: "unchecked",
+    });
+    await logEvent("provider.created", `ZeptoMail connection "${input.name}" added`);
+    return dto(await findWithSecretOr404(String(created._id)));
+  }
   const created = await ProviderConnection.create({
     name: input.name,
     type: input.type,
@@ -121,10 +145,20 @@ export async function updateProviderConnection(
     clientId?: string;
     clientSecret?: string;
     sendFormat?: SendFormat;
+    region?: ZeptoRegion;
+    apiToken?: string;
   },
 ): Promise<ProviderDTO> {
   await connectDB();
   const existing = await findWithSecretOr404(id);
+  if (existing.type === "zeptomail") return updateZeptoConnection(existing, input);
+  if (input.region !== undefined || input.apiToken !== undefined) {
+    throw new ApiError(
+      400,
+      "INVALID_FIELDS",
+      "Region and Send Mail token are only for ZeptoMail connections",
+    );
+  }
 
   const update: Record<string, unknown> = {};
   if (input.name !== undefined) update.name = input.name;
@@ -157,6 +191,52 @@ export async function updateProviderConnection(
     );
   }
   return dto(await findWithSecretOr404(id));
+}
+
+/** Name, region and token (empty token = keep the saved one). A new token or region must be verified again. */
+async function updateZeptoConnection(
+  existing: ProviderRecord,
+  input: {
+    name?: string;
+    tenantId?: string;
+    clientId?: string;
+    clientSecret?: string;
+    sendFormat?: SendFormat;
+    region?: ZeptoRegion;
+    apiToken?: string;
+  },
+): Promise<ProviderDTO> {
+  if (
+    input.tenantId !== undefined ||
+    input.clientId !== undefined ||
+    input.clientSecret !== undefined ||
+    input.sendFormat !== undefined
+  ) {
+    throw new ApiError(
+      400,
+      "INVALID_FIELDS",
+      "Tenant ID, Client ID, client secret and sending format are only for Microsoft 365 connections",
+    );
+  }
+  const update: Record<string, unknown> = {};
+  if (input.name !== undefined) update.name = input.name;
+  if (input.region !== undefined) update.region = input.region;
+  if (input.apiToken !== undefined) update.clientSecretEnc = encrypt(input.apiToken);
+
+  const credentialsChanged =
+    (input.region !== undefined && input.region !== existing.region) ||
+    input.apiToken !== undefined;
+  if (credentialsChanged) {
+    Object.assign(update, { status: "unchecked", lastError: null, lastCheckedAt: null });
+  }
+  await ProviderConnection.updateOne({ _id: existing._id }, { $set: update });
+  if (credentialsChanged) {
+    await logEvent(
+      "provider.updated",
+      `ZeptoMail connection "${existing.name}" token or region changed`,
+    );
+  }
+  return dto(await findWithSecretOr404(String(existing._id)));
 }
 
 export const PROVIDER_DELETED_REASON = "Provider deleted — edit the inbox to choose a new provider";

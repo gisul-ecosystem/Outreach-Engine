@@ -4,6 +4,7 @@ import {
   PROVIDER_STATUSES,
   PROVIDER_TYPES,
   SEND_FORMATS,
+  ZEPTO_REGIONS,
 } from "@/shared/enums";
 import { deletedAtField } from "@/server/db/soft-delete";
 
@@ -13,8 +14,11 @@ const providerConnectionSchema = new Schema(
     type: { type: String, enum: PROVIDER_TYPES, required: true },
     tenantId: { type: String, trim: true },
     clientId: { type: String, trim: true },
+    // The secret: Microsoft's client secret, or ZeptoMail's Send Mail token.
     // Encrypted with src/server/lib/crypto.ts. select:false = never loaded unless asked for explicitly.
     clientSecretEnc: { type: String, select: false },
+    // ZeptoMail only: the account's data centre (api.zeptomail.<region>).
+    region: { type: String, enum: [...ZEPTO_REGIONS, null], default: null },
     status: { type: String, enum: PROVIDER_STATUSES, default: "unchecked" },
     lastCheckedAt: { type: Date, default: null },
     lastError: { type: String, default: null },

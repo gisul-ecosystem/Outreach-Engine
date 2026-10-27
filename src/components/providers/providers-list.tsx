@@ -38,7 +38,12 @@ import {
 } from "@/components/ui/table";
 import { errorMessage } from "@/lib/client/api";
 import { formatRelative } from "@/lib/client/format";
-import { hasMailRead, type ProviderDTO } from "@/shared/provider";
+import {
+  hasMailRead,
+  PROVIDER_TYPE_LABELS,
+  ZEPTO_REGION_LABELS,
+  type ProviderDTO,
+} from "@/shared/provider";
 import { ProviderFormDialog } from "./provider-form-dialog";
 import { ProviderStatusBadge } from "./provider-status-badge";
 import { SetupGuide } from "./setup-guide";
@@ -67,7 +72,7 @@ export function ProvidersList() {
         </p>
         <Button onClick={openAdd}>
           <PlusIcon />
-          Add Microsoft 365 connection
+          Add connection
         </Button>
       </div>
 
@@ -80,7 +85,7 @@ export function ProvidersList() {
         <EmptyState
           icon={PlugZapIcon}
           title="No provider connections yet"
-          description="Connect Microsoft 365 so inboxes can send. You need a Tenant ID, Client ID and Client secret (see the guide above)."
+          description="Connect Microsoft 365 or ZeptoMail so inboxes can send (see the guides above)."
         />
       ) : (
         <div className="rounded-lg border">
@@ -89,7 +94,7 @@ export function ProvidersList() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Tenant ID</TableHead>
+                <TableHead>Tenant ID / Region</TableHead>
                 <TableHead>Client ID</TableHead>
                 <TableHead className="text-right">Inboxes</TableHead>
                 <TableHead>Last verified</TableHead>
@@ -116,8 +121,9 @@ export function ProvidersList() {
                         <TableCell className="font-medium">
                           {provider.name}
                           <span className="block text-xs font-normal text-muted-foreground">
-                            Microsoft 365 ·{" "}
-                            {provider.sendFormat === "outlook" ? "Outlook format" : "MIME format"}
+                            {PROVIDER_TYPE_LABELS[provider.type]}
+                            {provider.type === "microsoft" &&
+                              ` · ${provider.sendFormat === "outlook" ? "Outlook format" : "MIME format"}`}
                           </span>
                         </TableCell>
                         <TableCell>
@@ -134,9 +140,25 @@ export function ProvidersList() {
                                 Mail.Read is missing: bounces and replies are not detected.
                               </p>
                             )}
+                          {provider.type === "zeptomail" && (
+                            <p className="mt-1 max-w-xs text-xs whitespace-normal text-muted-foreground">
+                              Sends only: bounces and replies are not detected.
+                            </p>
+                          )}
                         </TableCell>
-                        <TableCell className="font-mono text-xs">{provider.tenantId}</TableCell>
-                        <TableCell className="font-mono text-xs">{provider.clientId}</TableCell>
+                        {provider.type === "zeptomail" ? (
+                          <>
+                            <TableCell className="text-xs">
+                              {provider.region ? ZEPTO_REGION_LABELS[provider.region] : "—"}
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">—</TableCell>
+                          </>
+                        ) : (
+                          <>
+                            <TableCell className="font-mono text-xs">{provider.tenantId}</TableCell>
+                            <TableCell className="font-mono text-xs">{provider.clientId}</TableCell>
+                          </>
+                        )}
                         <TableCell className="text-right tabular-nums">
                           {provider.inboxCount}
                         </TableCell>

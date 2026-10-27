@@ -79,7 +79,14 @@ export function ClicksView() {
         if (result.data.length < MAX_PAGE_LIMIT || allClicks.length >= result.total) break;
       }
 
-      const headers = ["When", "Contact Name", "Contact Email", "Verdict", "Reasons", "Destination URL"];
+      const headers = [
+        "When",
+        "Contact Name",
+        "Contact Email",
+        "Verdict",
+        "Reasons",
+        "Destination URL",
+      ];
       const rows = allClicks.map((click) => [
         formatDateTime(click.at),
         click.contact?.name ?? "",
@@ -135,15 +142,15 @@ export function ClicksView() {
             disabled={lists.isPending}
           />
           {lists.isPending && (
-            <span className="text-xs text-muted-foreground mt-1">Loading lists...</span>
+            <span className="mt-1 text-xs text-muted-foreground">Loading lists...</span>
           )}
           {lists.isError && (
-            <span className="text-xs text-destructive mt-1">
+            <span className="mt-1 text-xs text-destructive">
               Could not load lists: {errorMessage(lists.error)}
             </span>
           )}
           {lists.data?.data.length === 0 && (
-            <span className="text-xs text-muted-foreground mt-1">No lists found</span>
+            <span className="mt-1 text-xs text-muted-foreground">No lists found</span>
           )}
         </div>
         <span className="text-sm text-muted-foreground">

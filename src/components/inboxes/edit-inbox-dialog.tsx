@@ -19,6 +19,7 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/c
 import { Input } from "@/components/ui/input";
 import { errorMessage } from "@/lib/client/api";
 import { createInboxSchema, type InboxDTO } from "@/shared/inbox";
+import { PROVIDER_TYPE_LABELS } from "@/shared/provider";
 import { InboxLimitFields } from "./inbox-limit-fields";
 import { useUpdateInbox } from "./use-inboxes";
 
@@ -129,12 +130,16 @@ export function EditInboxDialog({
                       onChange={field.onChange}
                       options={(providers.data?.data ?? []).map((p) => ({
                         value: p.id,
-                        label: p.name,
+                        label: `${p.name} (${PROVIDER_TYPE_LABELS[p.type]})${p.status === "connected" ? "" : " — not verified"}`,
                       }))}
                       invalid={!!errors.providerConnectionId}
                     />
                   )}
                 />
+                <FieldDescription>
+                  Switch between Microsoft 365 and ZeptoMail here. The next email uses the new
+                  choice.
+                </FieldDescription>
                 <FieldError errors={[errors.providerConnectionId]} />
               </Field>
               <InboxLimitFields />

@@ -4,8 +4,16 @@
 export const USER_ROLES = ["admin", "member"] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
-export const PROVIDER_TYPES = ["microsoft", "google"] as const;
+export const PROVIDER_TYPES = ["microsoft", "google", "zeptomail"] as const;
 export type ProviderType = (typeof PROVIDER_TYPES)[number];
+
+/**
+ * ZeptoMail data centre a connection's account lives in (its API host is api.zeptomail.<region>).
+ * An account only works with its own region's host.
+ */
+export const ZEPTO_REGIONS = ["in", "com", "eu", "com.au"] as const;
+export type ZeptoRegion = (typeof ZEPTO_REGIONS)[number];
+export const DEFAULT_ZEPTO_REGION: ZeptoRegion = "in";
 
 export const PROVIDER_STATUSES = ["connected", "error", "unchecked"] as const;
 export type ProviderStatus = (typeof PROVIDER_STATUSES)[number];

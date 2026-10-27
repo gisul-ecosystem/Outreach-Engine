@@ -336,7 +336,7 @@ export async function testSendFromInbox(
     const format = result.format ?? "mime";
     await logEvent(
       "inbox.test_sent",
-      `Test email ${mode === "dry-run" ? "simulated (dry run)" : "sent"} from ${inbox.email} to ${to} (${format === "outlook" ? "Outlook" : "MIME"} format)`,
+      `Test email ${mode === "dry-run" ? "simulated (dry run)" : "sent"} from ${inbox.email} to ${to} (${connection.type === "zeptomail" ? "via ZeptoMail" : `${format === "outlook" ? "Outlook" : "MIME"} format`})`,
       { inboxId: inbox._id, domainId: inbox.domainId, campaignId: options.campaignId },
     );
     return {
@@ -352,11 +352,18 @@ export async function testSendFromInbox(
         inboxId: inbox._id,
         domainId: inbox.domainId,
       });
+      const zepto = connection.type === "zeptomail";
       const hint =
-        err.kind === "auth"
-          ? " Check the provider connection (Verify) and the Mail.Send permission."
-          : "";
-      throw new ApiError(502, "SEND_FAILED", `Microsoft rejected the email: ${err.message}${hint}`);
+        err.kind !== "auth"
+          ? ""
+          : zepto
+            ? " Check the provider connection (Verify): the Send Mail token and the region."
+            : " Check the provider connection (Verify) and the Mail.Send permission.";
+      throw new ApiError(
+        502,
+        "SEND_FAILED",
+        `${zepto ? "ZeptoMail" : "Microsoft"} rejected the email: ${err.message}${hint}`,
+      );
     }
     throw err;
   }
@@ -371,8 +378,12 @@ async function connectionForDomain(
 ) {
   let id = requestedId ?? (domain.providerConnectionId ? String(domain.providerConnectionId) : "");
   if (!id) {
-    // Domains are not tied to a connection; if there is only one, use it.
-    const all = await ProviderConnection.find(notDeleted({})).select("_id").limit(2).lean();
+    // Domains are not tied to a connection; if there is only one Microsoft 365 one, use it
+    // (only Microsoft can list mailboxes).
+    const all = await ProviderConnection.find(notDeleted({ type: "microsoft" }))
+      .select("_id")
+      .limit(2)
+      .lean();
     if (all.length === 1) id = String(all[0]._id);
   }
   if (!id) {
@@ -387,6 +398,13 @@ async function connectionForDomain(
     .lean();
   if (!connection) {
     throw new ApiError(400, "INVALID_PROVIDER", "That provider connection does not exist");
+  }
+  if (connection.type !== "microsoft") {
+    throw new ApiError(
+      400,
+      "NOT_SUPPORTED",
+      "Only a Microsoft 365 connection can list mailboxes. For ZeptoMail, use “Add manually instead” and choose the ZeptoMail connection under “Send through”.",
+    );
   }
   return connection;
 }

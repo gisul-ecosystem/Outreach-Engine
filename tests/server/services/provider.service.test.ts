@@ -145,3 +145,71 @@ describe("provider connections", () => {
     await expect(resumeInbox(String(inbox._id))).resolves.toMatchObject({ status: "active" });
   });
 });
+
+describe("ZeptoMail connections", () => {
+  const TOKEN = "wSsVR60-zepto-send-mail-token-value";
+  const zepto = {
+    name: "Zepto",
+    type: "zeptomail" as const,
+    region: "in" as const,
+    apiToken: TOKEN,
+  };
+
+  it("stores the token encrypted, never returns it, and reports the region", async () => {
+    const created = await createProviderConnection(zepto);
+    expect(created).toMatchObject({
+      type: "zeptomail",
+      region: "in",
+      status: "unchecked",
+      secretSet: true,
+      tenantId: "",
+      clientId: "",
+    });
+    expect(JSON.stringify(created)).not.toContain(TOKEN);
+    const raw = await ProviderConnection.findById(created.id).select("+clientSecretEnc").lean();
+    expect(decrypt(raw!.clientSecretEnc!)).toBe(TOKEN);
+    expect(JSON.stringify(await listProviders({ page: 1, limit: 20 }))).not.toContain(TOKEN);
+    expect(consoleOutput.join("\n")).not.toContain(TOKEN);
+  });
+
+  it("a new token or region must be verified again; Microsoft-only fields are refused", async () => {
+    const created = await createProviderConnection(zepto);
+    await verifyProviderConnection(created.id, { provider: okProvider });
+
+    expect(await updateProviderConnection(created.id, { name: "Renamed" })).toMatchObject({
+      name: "Renamed",
+      status: "connected",
+    });
+    expect(await updateProviderConnection(created.id, { region: "com" })).toMatchObject({
+      region: "com",
+      status: "unchecked",
+    });
+    await updateProviderConnection(created.id, { apiToken: "another-token-1234567890" });
+    const raw = await ProviderConnection.findById(created.id).select("+clientSecretEnc").lean();
+    expect(decrypt(raw!.clientSecretEnc!)).toBe("another-token-1234567890");
+
+    await expect(
+      updateProviderConnection(created.id, { tenantId: input.tenantId }),
+    ).rejects.toMatchObject({ code: "INVALID_FIELDS" });
+    const microsoft = await createProviderConnection(input);
+    await expect(updateProviderConnection(microsoft.id, { apiToken: TOKEN })).rejects.toMatchObject(
+      { code: "INVALID_FIELDS" },
+    );
+  });
+
+  it("an inbox can switch between Microsoft 365 and ZeptoMail and back", async () => {
+    const microsoft = await createProviderConnection(input);
+    const zeptoConn = await createProviderConnection(zepto);
+    const domain = await Domain.create({ name: "tryracko.in" });
+    const inbox = await Inbox.create({
+      email: "a@tryracko.in",
+      domainId: domain._id,
+      providerConnectionId: microsoft.id,
+    });
+
+    const switched = await updateInbox(String(inbox._id), { providerConnectionId: zeptoConn.id });
+    expect(switched.providerConnectionId).toBe(zeptoConn.id);
+    const back = await updateInbox(String(inbox._id), { providerConnectionId: microsoft.id });
+    expect(back.providerConnectionId).toBe(microsoft.id);
+  });
+});

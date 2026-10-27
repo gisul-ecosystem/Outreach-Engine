@@ -2,10 +2,13 @@ import { z } from "zod";
 import { paginationSchema } from "./common";
 import {
   DEFAULT_SEND_FORMAT,
+  DEFAULT_ZEPTO_REGION,
   SEND_FORMATS,
+  ZEPTO_REGIONS,
   type ProviderStatus,
   type ProviderType,
   type SendFormat,
+  type ZeptoRegion,
 } from "./enums";
 
 // Microsoft Tenant ID: a GUID or a tenant domain like contoso.onmicrosoft.com
@@ -50,18 +53,58 @@ export const SEND_FORMAT_LABELS: Record<SendFormat, { label: string; description
   },
 };
 
+/** Shown wherever a connection's kind is named. */
+export const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
+  microsoft: "Microsoft 365",
+  google: "Google Workspace",
+  zeptomail: "ZeptoMail",
+};
+
+export const ZEPTO_REGION_LABELS: Record<ZeptoRegion, string> = {
+  in: "India (zeptomail.in)",
+  com: "United States (zeptomail.com)",
+  eu: "Europe (zeptomail.eu)",
+  "com.au": "Australia (zeptomail.com.au)",
+};
+
+const zeptoRegion = z.enum(ZEPTO_REGIONS, { error: "Choose the region of your ZeptoMail account" });
+/** The Mail Agent's Send Mail token. ZeptoMail shows it with a "Zoho-enczapikey " prefix; that is dropped. */
+const zeptoToken = z
+  .string()
+  .trim()
+  .transform((v) => v.replace(/^Zoho-enczapikey\s+/i, "").trim())
+  .pipe(
+    z
+      .string()
+      .min(20, "Paste the Send Mail token of your ZeptoMail Mail Agent")
+      .max(2000, "Token is too long")
+      .regex(/^\S+$/, "The token cannot contain spaces"),
+  );
+
 export const createProviderSchema = z.object({
   name,
-  // Only Microsoft 365 for now; Google Workspace is planned for v2.
-  type: z
-    .literal("microsoft", { error: "Only Microsoft 365 is supported for now" })
-    .default("microsoft"),
+  // Microsoft 365 here; ZeptoMail has its own schema below. Google Workspace is planned for v2.
+  type: z.literal("microsoft", { error: "Choose Microsoft 365 or ZeptoMail" }).default("microsoft"),
   tenantId,
   clientId,
   clientSecret,
   sendFormat: sendFormat.default(DEFAULT_SEND_FORMAT),
 });
 export type CreateProviderInput = z.input<typeof createProviderSchema>;
+
+/** `POST /api/providers` with type "zeptomail". */
+export const createZeptoProviderSchema = z.object({
+  name,
+  type: z.literal("zeptomail"),
+  region: zeptoRegion.default(DEFAULT_ZEPTO_REGION),
+  apiToken: zeptoToken,
+});
+export type CreateZeptoProviderInput = z.input<typeof createZeptoProviderSchema>;
+
+/** Edit form for a ZeptoMail connection: the token may be left empty (= keep the saved one). */
+export const editZeptoProviderFormSchema = createZeptoProviderSchema.extend({
+  apiToken: z.string().trim(),
+});
 
 /** Edit form: same fields, but the secret may be left empty (= keep the saved one). */
 export const editProviderFormSchema = createProviderSchema.extend({
@@ -85,6 +128,14 @@ export const updateProviderSchema = z
       .pipe(clientSecret.optional())
       .optional(),
     sendFormat: sendFormat.optional(),
+    // ZeptoMail connections only. Leave apiToken empty to keep the saved one.
+    region: zeptoRegion.optional(),
+    apiToken: z
+      .string()
+      .trim()
+      .transform((v) => (v === "" ? undefined : v))
+      .pipe(zeptoToken.optional())
+      .optional(),
   })
   .refine((v) => Object.values(v).some((value) => value !== undefined), "Nothing to update");
 export type UpdateProviderInput = z.input<typeof updateProviderSchema>;
@@ -106,6 +157,8 @@ export type ProviderDTO = {
   sendFormat: SendFormat;
   /** Application permissions Microsoft granted (found at the last Verify); null = not checked yet. */
   grantedPermissions: string[] | null;
+  /** ZeptoMail: the account's region; null for Microsoft. */
+  region: ZeptoRegion | null;
   inboxCount: number;
   createdAt: string;
   updatedAt: string;

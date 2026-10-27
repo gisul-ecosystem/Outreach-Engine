@@ -37,7 +37,8 @@ export function ImportMailboxesDialog({ defaultDomainId }: { defaultDomainId?: s
     domainId ?? defaultDomainId ?? (domainList.length === 1 ? domainList[0].id : null);
 
   const providers = useProviders();
-  const providerList = providers.data?.data ?? [];
+  // Only Microsoft 365 can list mailboxes (ZeptoMail inboxes are added with "Add manually instead").
+  const providerList = (providers.data?.data ?? []).filter((p) => p.type === "microsoft");
   const activeProviderId = providerId ?? providerList[0]?.id ?? null;
 
   const discovery = useDiscoverMailboxes(activeDomainId, activeProviderId, open);

@@ -45,6 +45,20 @@ describe("getProvider + sendingMode (safety rule)", () => {
     expect(p.getVerificationProvider(p.connection)).toBeInstanceOf(p.MicrosoftGraphProvider);
   });
 
+  it("ZeptoMail connection: real ZeptoMail provider when live, still FakeProvider in dry run", async () => {
+    const live = await loadWith({ DRY_RUN: "false", SENDING_ENABLED: "true" });
+    const zepto = { ...live.connection, type: "zeptomail", region: "in", sendFormat: "outlook" };
+    expect(live.getProvider(zepto)).toBeInstanceOf(live.ZeptoMailProvider);
+    expect(live.getVerificationProvider(zepto)).toBeInstanceOf(live.ZeptoMailProvider);
+    // ZeptoMail always gets the engine-built email, whatever the saved Outlook setting says.
+    expect(live.sendFormatOf(zepto)).toBe("mime");
+
+    const dry = await loadWith({ DRY_RUN: "true", SENDING_ENABLED: "true" });
+    expect(
+      dry.getProvider({ ...zepto, clientSecretEnc: dry.connection.clientSecretEnc }),
+    ).toBeInstanceOf(dry.FakeProvider);
+  });
+
   it("rejects Google connections for now", async () => {
     const p = await loadWith({ DRY_RUN: "false", SENDING_ENABLED: "true" });
     expect(() => p.getProvider({ ...p.connection, type: "google" })).toThrow(/Only Microsoft/);

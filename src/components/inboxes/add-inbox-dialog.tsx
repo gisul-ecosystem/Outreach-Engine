@@ -25,6 +25,7 @@ import { ApiClientError, errorMessage } from "@/lib/client/api";
 import { objectIdSchema } from "@/shared/common";
 import { DEFAULTS } from "@/shared/enums";
 import { createInboxSchema } from "@/shared/inbox";
+import { PROVIDER_TYPE_LABELS } from "@/shared/provider";
 import { InboxLimitFields } from "./inbox-limit-fields";
 import { useCreateInbox } from "./use-inboxes";
 
@@ -79,7 +80,7 @@ export function AddInboxDialog({
 
   const providerOptions = (providers.data?.data ?? []).map((p) => ({
     value: p.id,
-    label: p.status === "connected" ? p.name : `${p.name} (not verified)`,
+    label: `${p.name} (${PROVIDER_TYPE_LABELS[p.type]})${p.status === "connected" ? "" : " — not verified"}`,
   }));
   const domainList = domains.data?.data ?? [];
 
@@ -174,7 +175,7 @@ export function AddInboxDialog({
               )}
               {providerOptions.length === 0 && (
                 <li>
-                  a Microsoft 365 connection —{" "}
+                  a Microsoft 365 or ZeptoMail connection —{" "}
                   <Link className="underline" href="/providers">
                     add one on the Providers page
                   </Link>
@@ -188,7 +189,8 @@ export function AddInboxDialog({
               <DialogHeader>
                 <DialogTitle>Add inbox</DialogTitle>
                 <DialogDescription>
-                  The mailbox must already exist in Microsoft 365.
+                  Microsoft 365: the mailbox must already exist there. ZeptoMail: the domain must be
+                  verified in ZeptoMail.
                 </DialogDescription>
               </DialogHeader>
               <FieldGroup>
