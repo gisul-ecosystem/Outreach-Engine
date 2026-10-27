@@ -81,6 +81,16 @@ function lookup(name: string, contact: TemplateContact, sender: TemplateSender):
     const value = get(raw) ?? get(customKey(raw)) ?? "";
     return { kind: "known", value: value.trim() };
   }
+
+  // Also accept bare custom keys without "custom." prefix (e.g. {{link}} matching custom.link)
+  const custom = contact.custom ?? {};
+  const get = (key: string) =>
+    custom instanceof Map ? custom.get(key) : (custom as Record<string, string>)[key];
+  const directValue = get(name) ?? get(customKey(name));
+  if (directValue !== undefined) {
+    return { kind: "known", value: directValue.trim() };
+  }
+
   return { kind: "unknown" };
 }
 
