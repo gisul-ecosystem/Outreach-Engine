@@ -1,6 +1,6 @@
 "use client";
 
-import { MousePointerClickIcon } from "lucide-react";
+import { Download, MousePointerClickIcon } from "lucide-react";
 import { useState } from "react";
 import { SimpleSelect } from "@/components/common/simple-select";
 import { EmptyState } from "@/components/layout/empty-state";
@@ -30,9 +30,71 @@ const FILTERS: { value: ClickFilter; label: string }[] = [
 export function ClicksView() {
   const [include, setInclude] = useState<ClickFilter>("real");
   const [page, setPage] = useState(1);
+  const [isExporting, setIsExporting] = useState(false);
   const clicks = useClicks({ page, limit: PAGE_SIZE, include });
   const total = clicks.data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const handleExportCsv = async () => {
+    if (!clicks.data) return;
+
+    setIsExporting(true);
+    try {
+      // Fetch all clicks data (not paginated) for export
+      const response = await fetch(
+        `/api/dashboard/clickers?include=${include}&limit=100000&page=1`,
+      );
+      if (!response.ok) throw new Error("Failed to fetch clicks data");
+
+      const data = await response.json();
+      const clicksData = data.data || [];
+
+      // Prepare CSV content
+      const headers = [
+        "When",
+        "Contact Name",
+        "Contact Email",
+        "Verdict",
+        "Reasons",
+        "Destination URL",
+      ];
+
+      const rows = clicksData.map((click: any) => [
+        formatDateTime(click.at),
+        click.contact?.name || "",
+        click.contact?.email || "",
+        click.verdict,
+        click.reasons.join("; "),
+        click.destinationUrl,
+      ]);
+
+      // Escape CSV fields
+      const escapeCsv = (field: string) => {
+        if (typeof field !== "string") return field;
+        if (field.includes(",") || field.includes('"') || field.includes("\n")) {
+          return `"${field.replace(/"/g, '""')}"`;
+        }
+        return field;
+      };
+
+      const csvContent = [
+        headers.map(escapeCsv).join(","),
+        ...rows.map((row: any[]) => row.map(escapeCsv).join(",")),
+      ].join("\n");
+
+      // Download CSV
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `link-clicks-${include}-${new Date().toISOString().split("T")[0]}.csv`;
+      link.click();
+    } catch (error) {
+      console.error("Export failed:", error);
+      alert("Failed to export clicks data");
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -49,7 +111,17 @@ export function ClicksView() {
         <span className="text-sm text-muted-foreground">
           {clicks.data ? `${total.toLocaleString()} click(s)` : " "}
         </span>
-        <p className="ml-auto max-w-md text-xs text-muted-foreground">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleExportCsv}
+          disabled={isExporting || !clicks.data || total === 0}
+          className="ml-auto"
+        >
+          <Download className="size-4" />
+          {isExporting ? "Exporting…" : "Export CSV"}
+        </Button>
+        <p className="ml-2 max-w-md text-xs text-muted-foreground">
           ⚠️ &quot;Maybe a bot&quot; = company email security often opens links by itself seconds
           after the email arrives. Hover a badge to see why.
         </p>
