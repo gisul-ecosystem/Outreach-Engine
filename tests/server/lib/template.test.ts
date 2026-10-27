@@ -33,6 +33,10 @@ describe("renderTemplate", () => {
 
   it("replaces custom variables (Map or plain object)", () => {
     expect(renderTemplate("in {{custom.city}}", ann).output).toBe("in Pune");
+    expect(renderTemplate("in {{city}}", ann).output).toBe("in Pune");
+    expect(
+      renderTemplate("{{link}}", { email: "a@b.co", custom: { link: "https://racko.ai/gpu" } }).output,
+    ).toBe("https://racko.ai/gpu");
     expect(
       renderTemplate("{{custom.city}}", { email: "a@b.co", custom: { city: "Delhi" } }).output,
     ).toBe("Delhi");

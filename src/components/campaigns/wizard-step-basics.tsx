@@ -5,6 +5,12 @@ import { SimpleSelect } from "@/components/common/simple-select";
 import { useLists } from "@/components/contacts/use-contacts";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  DEFAULT_BODY_TEMPLATE,
+  RACKO_DEFAULT_BODY,
+  RACKO_DEFAULT_HTML,
+  RACKO_DEFAULT_SUBJECT,
+} from "@/shared/campaign";
 import { useCampaigns } from "./use-campaigns";
 import type { WizardForm } from "./wizard-form";
 
@@ -105,7 +111,19 @@ export function WizardStepBasics({
           <SimpleSelect
             id="campaign-list"
             value={form.listId}
-            onChange={(listId) => onChange({ listId })}
+            onChange={(listId) => {
+              const patch: Partial<WizardForm> = { listId };
+              // When selecting a list on a fresh campaign, pre-populate the Racko template with placeholder links
+              if (
+                !form.subjectTemplate.trim() &&
+                (!form.bodyTemplate.trim() || form.bodyTemplate === DEFAULT_BODY_TEMPLATE)
+              ) {
+                patch.subjectTemplate = RACKO_DEFAULT_SUBJECT;
+                patch.bodyTemplate = RACKO_DEFAULT_BODY;
+                patch.bodyHtml = RACKO_DEFAULT_HTML;
+              }
+              onChange(patch);
+            }}
             options={options}
             disabled={listLocked}
             placeholder={

@@ -28,6 +28,115 @@ export type SenderVariable = (typeof SENDER_VARIABLES)[number];
 export const OPT_OUT_LINE = "Not relevant? Just reply 'no' and I won't email again.";
 export const DEFAULT_BODY_TEMPLATE = `Hi {{firstName|there}},\n\n\n\n${OPT_OUT_LINE}`;
 
+export const RACKO_DEFAULT_SUBJECT = "Cloud infrastructure for what you’re building";
+
+export const RACKO_DEFAULT_BODY = `Hi {{firstName|there}},
+
+We’d like to introduce Racko, a cloud infrastructure platform designed to help teams explore computing resources for their projects and workloads.
+
+From application hosting and development environments to compute-intensive tasks and GPU workloads, Racko brings infrastructure options into one place so you can explore what fits your needs.
+
+Whether you’re building a product, running workloads, or exploring infrastructure for an upcoming project, we invite you to take a look at Racko and see if it could be a fit.
+
+Explore GPU Plans: {{link|https://racko.ai}}
+
+Have a project in mind? Reply to this email and tell us a little about your infrastructure requirements. We’d be glad to connect.
+
+Best,
+Team Racko
+https://racko.ai
+
+You’re receiving this message because Racko may be relevant to your infrastructure needs.`;
+
+export const RACKO_DEFAULT_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Racko — Cloud Infrastructure</title>
+</head>
+<body style="margin:0;padding:0;background-color:#ffffff;">
+  <div style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">
+    Discover cloud infrastructure for your compute and GPU workloads with Racko.
+  </div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;border-collapse:collapse;background-color:#ffffff;">
+    <tr>
+      <td align="left" style="padding:28px 20px;">
+        <table role="presentation" width="660" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:660px;border-collapse:collapse;margin:0;">
+          <!-- Brand header -->
+          <tr>
+            <td style="padding:0 0 18px 0;border-bottom:1px solid #eeeeee;font-family:Arial,Helvetica,sans-serif;font-size:28px;line-height:32px;font-weight:bold;color:#171717;letter-spacing:-0.5px;">
+              Racko
+            </td>
+          </tr>
+          <!-- Intro -->
+          <tr>
+            <td style="padding:24px 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:20px;letter-spacing:1px;text-transform:uppercase;font-weight:bold;color:#df3039;">
+              Introducing Racko
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 0 15px 0;font-family:Arial,Helvetica,sans-serif;font-size:25px;line-height:33px;font-weight:bold;letter-spacing:-0.2px;color:#171717;">
+              Cloud infrastructure for what you’re building.
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 0 15px 0;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:25px;color:#444444;">
+              Hi {{firstName|there}},
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 0 14px 0;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:25px;color:#444444;">
+              We’d like to introduce <strong style="color:#171717;">Racko</strong>, a cloud infrastructure platform designed to help teams explore computing resources for their projects and workloads.
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 0 14px 0;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:25px;color:#444444;">
+              From application hosting and development environments to compute-intensive tasks and GPU workloads, Racko brings infrastructure options into one place so you can explore what fits your needs.
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 0 14px 0;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:25px;color:#444444;">
+              Whether you’re building a product, running workloads, or exploring infrastructure for an upcoming project, we invite you to take a look at Racko and see if it could be a fit.
+            </td>
+          </tr>
+          <!-- Primary CTA: table-based button for email-client compatibility -->
+          <tr>
+            <td style="padding:0 0 22px 0;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;">
+                <tr>
+                  <td align="center" bgcolor="#df3039" style="background-color:#df3039;border:1px solid #df3039;border-radius:4px;">
+                    <a href="{{link|https://racko.ai}}" target="_blank" style="display:inline-block;padding:14px 23px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:20px;font-weight:bold;color:#ffffff;text-decoration:none;">Explore GPU Plans</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 0 23px 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:23px;color:#555555;">
+              Have a project in mind? Reply to this email and tell us a little about your infrastructure requirements. We’d be glad to connect.
+            </td>
+          </tr>
+          <!-- Sign-off and footer -->
+          <tr>
+            <td style="padding:22px 0 0 0;border-top:1px solid #e7e7e7;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:23px;color:#333333;">
+              Best,<br>
+              <strong>Team Racko</strong><br>
+              <a href="https://racko.ai" target="_blank" style="color:#df3039;text-decoration:none;">racko.ai</a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:18px;color:#888888;">
+              You’re receiving this message because Racko may be relevant to your infrastructure needs.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
 export const MAX_SUBJECT_LENGTH = 300;
 export const MAX_BODY_LENGTH = 20_000;
 export const MAX_CAMPAIGN_INBOXES = 100;
