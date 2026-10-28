@@ -152,6 +152,50 @@ describe("list / update / pause / resume / delete", () => {
   });
 });
 
+describe("reading connection (send via ZeptoMail, read replies in Outlook)", () => {
+  async function zepto() {
+    return String(
+      (await ProviderConnection.create({ name: "Zepto", type: "zeptomail" }))._id,
+    );
+  }
+
+  it("sends through ZeptoMail and reads with Microsoft", async () => {
+    const zeptoId = await zepto();
+    const inbox = await createInbox({
+      ...base(),
+      providerConnectionId: zeptoId,
+      readingConnectionId: providerId,
+    });
+    expect(inbox).toMatchObject({
+      providerName: "Zepto",
+      readingConnectionId: providerId,
+      readingConnectionName: "M365",
+    });
+  });
+
+  it("only accepts a Microsoft connection for reading", async () => {
+    const zeptoId = await zepto();
+    await expect(
+      createInbox({ ...base(), providerConnectionId: zeptoId, readingConnectionId: zeptoId }),
+    ).rejects.toMatchObject({ status: 400, code: "NOT_SUPPORTED" });
+  });
+
+  it("changing the reader starts a fresh first look; null clears it", async () => {
+    const inbox = await createInbox({ ...base(), providerConnectionId: await zepto() });
+    await Inbox.updateOne(
+      { _id: inbox.id },
+      { $set: { mailboxCheckedAt: new Date(), repliesCheckedAt: new Date() } },
+    );
+    await updateInbox(inbox.id, { readingConnectionId: providerId });
+    expect(await Inbox.findById(inbox.id).lean()).toMatchObject({
+      mailboxCheckedAt: null,
+      repliesCheckedAt: null,
+    });
+    const cleared = await updateInbox(inbox.id, { readingConnectionId: null });
+    expect(cleared.readingConnectionId).toBeNull();
+  });
+});
+
 describe("testSendFromInbox", () => {
   it("in DRY_RUN uses the FakeProvider: logged, not sent", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});

@@ -21,6 +21,7 @@ import { errorMessage } from "@/lib/client/api";
 import { createInboxSchema, type InboxDTO } from "@/shared/inbox";
 import { PROVIDER_TYPE_LABELS } from "@/shared/provider";
 import { InboxLimitFields } from "./inbox-limit-fields";
+import { ReadingConnectionField } from "./reading-connection-field";
 import { useUpdateInbox } from "./use-inboxes";
 
 const formSchema = z
@@ -29,6 +30,7 @@ const formSchema = z
     senderName: z.string().trim().max(100),
     senderRole: z.string().trim().max(100),
     providerConnectionId: createInboxSchema.shape.providerConnectionId,
+    readingConnectionId: createInboxSchema.shape.readingConnectionId.unwrap(),
     dailyLimit: createInboxSchema.shape.dailyLimit.unwrap(),
     minGapSeconds: createInboxSchema.shape.minGapSeconds.unwrap(),
     maxGapSeconds: createInboxSchema.shape.maxGapSeconds.unwrap(),
@@ -59,6 +61,7 @@ export function EditInboxDialog({
           senderName: inbox.senderName,
           senderRole: inbox.senderRole,
           providerConnectionId: inbox.providerConnectionId ?? "",
+          readingConnectionId: inbox.readingConnectionId,
           dailyLimit: inbox.dailyLimit,
           minGapSeconds: inbox.minGapSeconds,
           maxGapSeconds: inbox.maxGapSeconds,
@@ -142,6 +145,7 @@ export function EditInboxDialog({
                 </FieldDescription>
                 <FieldError errors={[errors.providerConnectionId]} />
               </Field>
+              <ReadingConnectionField id="edit-inbox-reading" />
               <InboxLimitFields />
             </FieldGroup>
             <DialogFooter>

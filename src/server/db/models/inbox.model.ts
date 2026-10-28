@@ -13,6 +13,9 @@ const inboxSchema = new Schema(
     senderRole: { type: String, default: "", trim: true },
     domainId: { type: Schema.Types.ObjectId, ref: "Domain", required: true },
     providerConnectionId: { type: Schema.Types.ObjectId, ref: "ProviderConnection", default: null },
+    // Optional Microsoft connection that READS this mailbox (bounces + replies) when the sending one
+    // cannot, e.g. sent through ZeptoMail while replies arrive in Outlook. null = read with the sender.
+    readingConnectionId: { type: Schema.Types.ObjectId, ref: "ProviderConnection", default: null },
     status: { type: String, enum: INBOX_STATUSES, default: "active" },
     pauseReason: { type: String, default: null },
     dailyLimit: { type: Number, default: DEFAULTS.dailyLimit, min: 1 },

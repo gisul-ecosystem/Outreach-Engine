@@ -35,7 +35,7 @@ import { refreshEngagement } from "@/server/services/engagement.service";
 import { logEvent } from "@/server/services/event.service";
 import { suppressOptOutReply } from "@/server/services/suppression.service";
 import type { TrackedEmailSource } from "@/shared/enums";
-import { matchSentEmails } from "./mailbox";
+import { matchSentEmails, READABLE_INBOX, readingConnectionOf } from "./mailbox";
 
 const log = createLogger("sent-items");
 
@@ -63,6 +63,7 @@ type InboxRow = {
   _id: Types.ObjectId;
   email: string;
   providerConnectionId?: Types.ObjectId | null;
+  readingConnectionId?: Types.ObjectId | null;
   sentItemsCheckedAt?: Date | null;
   repliesCheckedAt?: Date | null;
 };
@@ -74,15 +75,15 @@ export async function sentItemsTick(
   const result: SentItemsResult = { inboxes: 0, manual: 0, engine: 0, replies: 0, optOuts: 0 };
   if (!getEnv().MAILBOX_READING) return result;
 
-  const inboxes = await Inbox.find(notDeleted({ providerConnectionId: { $ne: null } }))
-    .select("email providerConnectionId sentItemsCheckedAt repliesCheckedAt")
+  const inboxes = await Inbox.find(notDeleted(READABLE_INBOX))
+    .select("email providerConnectionId readingConnectionId sentItemsCheckedAt repliesCheckedAt")
     .lean<InboxRow[]>();
   // Emails between our own inboxes are not replies from the people we email.
   const ownAddresses = new Set(inboxes.map((i) => i.email));
 
   for (const inbox of inboxes) {
     const connection = await ProviderConnection.findOne(
-      notDeleted({ _id: inbox.providerConnectionId }),
+      notDeleted({ _id: readingConnectionOf(inbox) }),
     )
       .select("+clientSecretEnc")
       .lean();

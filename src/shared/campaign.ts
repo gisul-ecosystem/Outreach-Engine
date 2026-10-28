@@ -30,7 +30,7 @@ export const DEFAULT_BODY_TEMPLATE = `Hi {{firstName|there}},\n\n\n\n${OPT_OUT_L
 
 export const RACKO_DEFAULT_SUBJECT = "Cloud infrastructure for what you’re building";
 
-export const RACKO_DEFAULT_BODY = `Hi {{firstName|there}},
+export const RACKO_DEFAULT_BODY = `Hi {{firstName|there}} {{lastName|}},
 
 We’d like to introduce Racko, a cloud infrastructure platform designed to help teams explore computing resources for their projects and workloads.
 
@@ -38,15 +38,16 @@ From application hosting and development environments to compute-intensive tasks
 
 Whether you’re building a product, running workloads, or exploring infrastructure for an upcoming project, we invite you to take a look at Racko and see if it could be a fit.
 
-Explore GPU Plans: {{link|https://racko.ai}}
+Explore Racko: {{custom.link|https://racko.ai}}
 
 Have a project in mind? Reply to this email and tell us a little about your infrastructure requirements. We’d be glad to connect.
 
 Best,
-Team Racko
+{{senderName|Team Racko}}
 https://racko.ai
 
-You’re receiving this message because Racko may be relevant to your infrastructure needs.`;
+---
+To unsubscribe, click here: mailto:{{senderEmail}}?subject=Unsubscribe`;
 
 export const RACKO_DEFAULT_HTML = `<!doctype html>
 <html lang="en">
@@ -55,7 +56,7 @@ export const RACKO_DEFAULT_HTML = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Racko — Cloud Infrastructure</title>
 </head>
-<body style="margin:0;padding:0;background-color:#ffffff;">
+<body style="margin:0;padding:0;background-color:#ffffff;font-family:Arial,Helvetica,sans-serif;">
   <div style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">
     Discover cloud infrastructure for your compute and GPU workloads with Racko.
   </div>
@@ -82,7 +83,7 @@ export const RACKO_DEFAULT_HTML = `<!doctype html>
           </tr>
           <tr>
             <td style="padding:0 0 15px 0;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:25px;color:#444444;">
-              Hi {{firstName|there}},
+              Hi {{firstName|there}} {{lastName|}},
             </td>
           </tr>
           <tr>
@@ -106,7 +107,7 @@ export const RACKO_DEFAULT_HTML = `<!doctype html>
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;">
                 <tr>
                   <td align="center" bgcolor="#df3039" style="background-color:#df3039;border:1px solid #df3039;border-radius:4px;">
-                    <a href="{{link|https://racko.ai}}" target="_blank" style="display:inline-block;padding:14px 23px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:20px;font-weight:bold;color:#ffffff;text-decoration:none;">Explore GPU Plans</a>
+                    <a href="{{custom.link|https://racko.ai}}" target="_blank" style="display:inline-block;padding:14px 23px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:20px;font-weight:bold;color:#ffffff;text-decoration:none;">Explore Racko</a>
                   </td>
                 </tr>
               </table>
@@ -121,13 +122,13 @@ export const RACKO_DEFAULT_HTML = `<!doctype html>
           <tr>
             <td style="padding:22px 0 0 0;border-top:1px solid #e7e7e7;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:23px;color:#333333;">
               Best,<br>
-              <strong>Team Racko</strong><br>
+              <strong>{{senderName|Team Racko}}</strong><br>
               <a href="https://racko.ai" target="_blank" style="color:#df3039;text-decoration:none;">racko.ai</a>
             </td>
           </tr>
           <tr>
-            <td style="padding:20px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:18px;color:#888888;">
-              You’re receiving this message because Racko may be relevant to your infrastructure needs.
+            <td style="padding:16px 0 0 0;border-top:1px solid #f0f0f0;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:18px;color:#888888;">
+              Don't want to hear from us? <a href="mailto:{{senderEmail}}?subject=Unsubscribe" style="color:#888888;text-decoration:underline;">Unsubscribe</a>
             </td>
           </tr>
         </table>

@@ -36,6 +36,8 @@ export const createInboxSchema = z
   .object({
     domainId: objectIdSchema,
     providerConnectionId: objectIdSchema,
+    /** Microsoft connection that reads replies/bounces (when sending through ZeptoMail). */
+    readingConnectionId: objectIdSchema.nullable().optional(),
     email: emailSchema,
     displayName: displayName.default(""),
     // Optional: the server fills in the defaults from Settings.
@@ -54,6 +56,8 @@ export const updateInboxSchema = z
     /** {{senderRole}} in templates, e.g. "Business Development". */
     senderRole: signatureField.optional(),
     providerConnectionId: objectIdSchema.optional(),
+    /** null = read the mailbox with the sending connection again. */
+    readingConnectionId: objectIdSchema.nullable().optional(),
     dailyLimit: dailyLimit.optional(),
     minGapSeconds: gapSeconds.optional(),
     maxGapSeconds: gapSeconds.optional(),
@@ -90,6 +94,9 @@ export type InboxDTO = {
   domainName: string;
   providerConnectionId: string | null;
   providerName: string | null;
+  /** Microsoft connection that reads replies/bounces; null = the sending connection does. */
+  readingConnectionId: string | null;
+  readingConnectionName: string | null;
   status: InboxStatus;
   pauseReason: string | null;
   dailyLimit: number;

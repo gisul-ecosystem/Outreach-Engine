@@ -13,8 +13,16 @@ vi.mock("@/server/providers", async (importOriginal) => {
 const mx = vi.hoisted(() => ({ ok: true }));
 vi.mock("@/server/lib/mx-check", () => ({ domainAcceptsEmail: async () => mx.ok }));
 
-import { Campaign, Contact, Event, Inbox, Message, Suppression } from "@/server/db/models";
-import { ProviderError } from "@/server/providers/types";
+import {
+  Campaign,
+  Contact,
+  Event,
+  Inbox,
+  Message,
+  ProviderConnection,
+  Suppression,
+} from "@/server/db/models";
+import { ProviderError, type EmailProvider } from "@/server/providers/types";
 import { mailboxTick } from "@/server/scheduler/mailbox";
 import { plannerTick } from "@/server/scheduler/planner";
 import { senderTick } from "@/server/scheduler/sender";
@@ -323,5 +331,39 @@ describe("mailbox tick: bounces and replies", () => {
     ]);
     expect(await mailboxTick(NOW)).toMatchObject({ replies: 0, bounces: 0 });
     expect(await Suppression.countDocuments()).toBe(0);
+  });
+
+  it("sent through ZeptoMail, replies in Outlook: reads with the reading connection", async () => {
+    const { world, message } = await oneSent();
+    const zepto = await ProviderConnection.create({ name: "Zepto", type: "zeptomail" });
+    await Inbox.updateOne(
+      { _id: world.inboxes[0]._id },
+      { $set: { providerConnectionId: zepto._id, readingConnectionId: world.connection._id } },
+    );
+    provider.listReceivedEmails.mockResolvedValue([
+      received({ fromEmail: message.toEmail, subject: "Re: Hi", uniqueBody: "Sounds good" }),
+    ]);
+    const readWith: string[] = [];
+    const result = await mailboxTick(NOW, {
+      provider: (connection) => {
+        readWith.push(String(connection._id));
+        return provider as unknown as EmailProvider;
+      },
+    });
+    expect(readWith).toEqual([String(world.connection._id)]);
+    expect(result).toMatchObject({ inboxes: 1, replies: 1, optOuts: 0 });
+    expect((await Message.findById(message._id).lean())!.repliedAt).toBeInstanceOf(Date);
+  });
+
+  it("without a reading connection, the sending connection reads the mailbox", async () => {
+    const { world } = await oneSent();
+    const readWith: string[] = [];
+    await mailboxTick(NOW, {
+      provider: (connection) => {
+        readWith.push(String(connection._id));
+        return provider as unknown as EmailProvider;
+      },
+    });
+    expect(readWith).toEqual([String(world.connection._id)]);
   });
 });

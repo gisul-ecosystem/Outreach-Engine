@@ -5,6 +5,7 @@ import { Types, type PipelineStage } from "mongoose";
 import { connectDB } from "@/server/db/connect";
 import { Contact, Inbox, LinkClick, TrackedEmail } from "@/server/db/models";
 import { notDeleted } from "@/server/db/soft-delete";
+import { READABLE_INBOX } from "@/server/scheduler/mailbox";
 import { getTimezone } from "@/server/services/settings.service";
 import type { Paginated } from "@/shared/common";
 import type { TrackedEmailSource } from "@/shared/enums";
@@ -82,7 +83,7 @@ export async function getTrackedStats(
         },
       }),
     ]),
-    Inbox.find(notDeleted({ providerConnectionId: { $ne: null } }))
+    Inbox.find(notDeleted(READABLE_INBOX))
       .select("email sentItemsCheckedAt")
       .sort({ email: 1 })
       .lean(),
