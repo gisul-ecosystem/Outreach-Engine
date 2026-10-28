@@ -27,6 +27,7 @@ import { DEFAULTS } from "@/shared/enums";
 import { createInboxSchema } from "@/shared/inbox";
 import { PROVIDER_TYPE_LABELS } from "@/shared/provider";
 import { InboxLimitFields } from "./inbox-limit-fields";
+import { ReadingConnectionField } from "./reading-connection-field";
 import { useCreateInbox } from "./use-inboxes";
 
 // The form asks for the part before "@" and a domain; the full email is built from both,
@@ -37,6 +38,7 @@ const formSchema = z
     providerConnectionId: objectIdSchema
       .or(z.literal(""))
       .refine((v) => v !== "", "Choose a provider connection"),
+    readingConnectionId: objectIdSchema.nullable(),
     localPart: z
       .string()
       .trim()
@@ -89,6 +91,7 @@ export function AddInboxDialog({
     defaultValues: {
       domainId: defaultDomainId ?? "",
       providerConnectionId: "",
+      readingConnectionId: null,
       localPart: "",
       displayName: "",
       dailyLimit: DEFAULTS.dailyLimit,
@@ -131,6 +134,7 @@ export function AddInboxDialog({
       await createInbox.mutateAsync({
         domainId: values.domainId,
         providerConnectionId: values.providerConnectionId,
+        readingConnectionId: values.readingConnectionId,
         email: `${values.localPart}@${domain?.name ?? ""}`,
         displayName: values.displayName,
         dailyLimit: values.dailyLimit,
@@ -254,6 +258,7 @@ export function AddInboxDialog({
                   />
                   <FieldError errors={[errors.providerConnectionId]} />
                 </Field>
+                <ReadingConnectionField id="inbox-reading" />
                 <InboxLimitFields />
               </FieldGroup>
               <DialogFooter>

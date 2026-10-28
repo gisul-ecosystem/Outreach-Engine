@@ -39,6 +39,7 @@ function toDTO(
   names: { domains: Map<string, string>; providers: Map<string, string> },
 ): InboxDTO {
   const providerId = inbox.providerConnectionId ? String(inbox.providerConnectionId) : null;
+  const readingId = inbox.readingConnectionId ? String(inbox.readingConnectionId) : null;
   return {
     id: String(inbox._id),
     email: inbox.email,
@@ -49,6 +50,8 @@ function toDTO(
     domainName: names.domains.get(String(inbox.domainId)) ?? emailDomain(inbox.email),
     providerConnectionId: providerId,
     providerName: providerId ? (names.providers.get(providerId) ?? null) : null,
+    readingConnectionId: readingId,
+    readingConnectionName: readingId ? (names.providers.get(readingId) ?? null) : null,
     status: inbox.status as InboxStatus,
     pauseReason: inbox.pauseReason ?? null,
     dailyLimit: inbox.dailyLimit,
@@ -66,7 +69,9 @@ async function loadNames(inboxes: InboxRecord[]) {
   const domainIds = [...new Set(inboxes.map((i) => String(i.domainId)))];
   const providerIds = [
     ...new Set(
-      inboxes.flatMap((i) => (i.providerConnectionId ? [String(i.providerConnectionId)] : [])),
+      inboxes.flatMap((i) =>
+        [i.providerConnectionId, i.readingConnectionId].flatMap((id) => (id ? [String(id)] : [])),
+      ),
     ),
   ];
   const [domains, providers] = await Promise.all([
@@ -96,6 +101,23 @@ async function findInboxOr404(id: string): Promise<InboxRecord> {
 async function assertProviderExists(id: string) {
   if (!(await ProviderConnection.exists(notDeleted({ _id: id })))) {
     throw new ApiError(400, "INVALID_PROVIDER", "That provider connection does not exist");
+  }
+}
+
+/** Only Microsoft can read a mailbox (ZeptoMail only sends). */
+async function assertReadingConnection(id: string) {
+  const connection = await ProviderConnection.findOne(notDeleted({ _id: id }))
+    .select("type")
+    .lean();
+  if (!connection) {
+    throw new ApiError(400, "INVALID_PROVIDER", "That provider connection does not exist");
+  }
+  if (connection.type !== "microsoft") {
+    throw new ApiError(
+      400,
+      "NOT_SUPPORTED",
+      "readingConnectionId: Only a Microsoft 365 connection can read replies from a mailbox",
+    );
   }
 }
 
@@ -151,6 +173,7 @@ export async function getInbox(id: string): Promise<InboxDTO> {
 export async function createInbox(input: {
   domainId: string;
   providerConnectionId: string;
+  readingConnectionId?: string | null;
   email: string;
   displayName: string;
   dailyLimit?: number;
@@ -170,6 +193,7 @@ export async function createInbox(input: {
     );
   }
   await assertProviderExists(input.providerConnectionId);
+  if (input.readingConnectionId) await assertReadingConnection(input.readingConnectionId);
   if (await Inbox.exists(notDeleted({ email: input.email }))) throw duplicateError(input.email);
 
   // Defaults come from the Settings document (fallback: BUILD_PLAN defaults).
@@ -188,6 +212,7 @@ export async function createInbox(input: {
       displayName: input.displayName,
       domainId: domain._id,
       providerConnectionId: input.providerConnectionId,
+      readingConnectionId: input.readingConnectionId ?? null,
       dailyLimit,
       minGapSeconds,
       maxGapSeconds,
@@ -210,6 +235,7 @@ export async function updateInbox(
     senderName?: string;
     senderRole?: string;
     providerConnectionId?: string;
+    readingConnectionId?: string | null;
     dailyLimit?: number;
     minGapSeconds?: number;
     maxGapSeconds?: number;
@@ -218,6 +244,7 @@ export async function updateInbox(
   await connectDB();
   const inbox = await findInboxOr404(id);
   if (input.providerConnectionId) await assertProviderExists(input.providerConnectionId);
+  if (input.readingConnectionId) await assertReadingConnection(input.readingConnectionId);
   assertGapOrder(
     input.minGapSeconds ?? inbox.minGapSeconds,
     input.maxGapSeconds ?? inbox.maxGapSeconds,
@@ -226,6 +253,13 @@ export async function updateInbox(
   const update = Object.fromEntries(
     Object.entries(input).filter(([, value]) => value !== undefined),
   );
+  // A different mailbox reader starts its own first look (it has never read this mailbox).
+  if (
+    input.readingConnectionId !== undefined &&
+    String(input.readingConnectionId) !== String(inbox.readingConnectionId ?? null)
+  ) {
+    Object.assign(update, { mailboxCheckedAt: null, repliesCheckedAt: null });
+  }
   await Inbox.updateOne({ _id: inbox._id }, { $set: update });
   return getInbox(id);
 }

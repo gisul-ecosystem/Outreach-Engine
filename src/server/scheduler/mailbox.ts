@@ -7,6 +7,7 @@
 //   - Outlook-format emails: Microsoft gives them their Message-ID, so it is read from Sent Items and
 //       saved on the email (bounces and follow-ups use it). Done first, before bounces are matched.
 // Read-only towards Microsoft: it never sends or deletes anything. Needs the Mail.Read permission.
+// An inbox with a reading connection is read through it (e.g. sent via ZeptoMail, replies in Outlook).
 import type { Types } from "mongoose";
 import { Inbox, Message, ProviderConnection, Suppression } from "@/server/db/models";
 import { notDeleted } from "@/server/db/soft-delete";
@@ -56,8 +57,25 @@ type InboxRow = {
   email: string;
   domainId: Types.ObjectId;
   providerConnectionId?: Types.ObjectId | null;
+  readingConnectionId?: Types.ObjectId | null;
   mailboxCheckedAt?: Date | null;
 };
+
+/** Inboxes with a connection that can read them (the sending one, or a separate reading one). */
+export const READABLE_INBOX = {
+  $or: [{ providerConnectionId: { $ne: null } }, { readingConnectionId: { $ne: null } }],
+};
+
+/**
+ * The connection that READS an inbox: its reading connection when set (e.g. sent through ZeptoMail,
+ * replies arrive in Outlook), else the one it sends with.
+ */
+export function readingConnectionOf(inbox: {
+  providerConnectionId?: Types.ObjectId | null;
+  readingConnectionId?: Types.ObjectId | null;
+}): Types.ObjectId | null {
+  return inbox.readingConnectionId ?? inbox.providerConnectionId ?? null;
+}
 
 export async function mailboxTick(
   now = new Date(),
@@ -67,12 +85,12 @@ export async function mailboxTick(
   // Nothing is really sent in a dry run, so there is nothing to read back.
   if (sendingMode() === "dry-run") return result;
 
-  const inboxes = await Inbox.find(notDeleted({ providerConnectionId: { $ne: null } }))
-    .select("email domainId providerConnectionId mailboxCheckedAt")
+  const inboxes = await Inbox.find(notDeleted(READABLE_INBOX))
+    .select("email domainId providerConnectionId readingConnectionId mailboxCheckedAt")
     .lean<InboxRow[]>();
   for (const inbox of inboxes) {
     const connection = await ProviderConnection.findOne(
-      notDeleted({ _id: inbox.providerConnectionId }),
+      notDeleted({ _id: readingConnectionOf(inbox) }),
     )
       .select("+clientSecretEnc")
       .lean();
