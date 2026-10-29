@@ -274,7 +274,14 @@ export async function deleteProviderConnection(
   // Inboxes that only READ through it go back to reading with their sending connection.
   await Inbox.updateMany(
     { readingConnectionId: existing._id },
-    { $set: { readingConnectionId: null, mailboxCheckedAt: null, repliesCheckedAt: null } },
+    {
+      $set: {
+        readingConnectionId: null,
+        mailboxCheckedAt: null,
+        repliesCheckedAt: null,
+        incomingCheckedAt: null,
+      },
+    },
   );
   await Domain.updateMany(
     { providerConnectionId: existing._id },

@@ -29,6 +29,8 @@ const inboxSchema = new Schema(
     sentItemsCheckedAt: { type: Date, default: null },
     // The same tracker has read the Inbox for replies to those emails up to this moment.
     repliesCheckedAt: { type: Date, default: null },
+    // The same tracker has stored the Inbox folder's emails (the Inbox page) up to this moment.
+    incomingCheckedAt: { type: Date, default: null },
     deletedAt: deletedAtField,
   },
   { timestamps: true, collection: "inboxes" },

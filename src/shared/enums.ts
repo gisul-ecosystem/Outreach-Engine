@@ -64,6 +64,16 @@ export const TRACKED_EMAIL_SOURCES = ["manual", "engine"] as const;
 export type TrackedEmailSource = (typeof TRACKED_EMAIL_SOURCES)[number];
 
 /**
+ * What an email that arrived in an inbox's Inbox folder is:
+ * - reply:      from someone we emailed (campaign or by hand)
+ * - bounce:     a delivery failure report ("Undeliverable…")
+ * - auto_reply: out-of-office / automatic reply
+ * - other:      anything else (newsletters, internal mail, strangers)
+ */
+export const INCOMING_EMAIL_KINDS = ["reply", "bounce", "auto_reply", "other"] as const;
+export type IncomingEmailKind = (typeof INCOMING_EMAIL_KINDS)[number];
+
+/**
  * What a tracking-link click was judged to be:
  * - click:      looks like a real person
  * - suspicious: maybe a bot (too fast after sending, a burst, missing browser details)

@@ -134,6 +134,7 @@ describe("sentItemsTick", () => {
       engine: 0,
       replies: 0,
       optOuts: 0,
+      incoming: 0,
     });
     const tracked = await TrackedEmail.findOne().lean();
     expect(tracked).toMatchObject({
