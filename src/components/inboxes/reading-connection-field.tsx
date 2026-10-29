@@ -8,7 +8,10 @@ import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui
 /** Select value for "no separate reader" (the form itself holds null). */
 const SAME_AS_SENDER = "same";
 
-type Values = { providerConnectionId: string; readingConnectionId: string | null };
+type Values = {
+  providerConnectionId: string;
+  readingConnectionId: string | null;
+};
 
 /**
  * "Read replies with": an optional Microsoft 365 connection that reads the mailbox for replies and

@@ -58,6 +58,11 @@ export const queryKeys = {
     timeline: (contactId: string) => ["tracking", "timeline", contactId] as const,
     clicks: (params: ListParams & object) => ["tracking", "clicks", params] as const,
   },
+  incomingEmails: {
+    all: ["incomingEmails"] as const,
+    list: (params: ListParams & object) => ["incomingEmails", "list", params] as const,
+    detail: (id: string) => ["incomingEmails", "detail", id] as const,
+  },
   sentEmails: {
     all: ["sentEmails"] as const,
     stats: (params: object) => ["sentEmails", "stats", params] as const,

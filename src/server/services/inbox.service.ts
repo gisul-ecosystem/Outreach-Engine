@@ -258,7 +258,11 @@ export async function updateInbox(
     input.readingConnectionId !== undefined &&
     String(input.readingConnectionId) !== String(inbox.readingConnectionId ?? null)
   ) {
-    Object.assign(update, { mailboxCheckedAt: null, repliesCheckedAt: null });
+    Object.assign(update, {
+      mailboxCheckedAt: null,
+      repliesCheckedAt: null,
+      incomingCheckedAt: null,
+    });
   }
   await Inbox.updateOne({ _id: inbox._id }, { $set: update });
   return getInbox(id);

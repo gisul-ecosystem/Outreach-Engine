@@ -3,6 +3,7 @@ import { Contact } from "./contact.model";
 import { Domain } from "./domain.model";
 import { Event } from "./event.model";
 import { Inbox } from "./inbox.model";
+import { IncomingEmail } from "./incoming-email.model";
 import { LinkClick } from "./link-click.model";
 import { List } from "./list.model";
 import { Message } from "./message.model";
@@ -18,6 +19,7 @@ export * from "./contact.model";
 export * from "./domain.model";
 export * from "./event.model";
 export * from "./inbox.model";
+export * from "./incoming-email.model";
 export * from "./link-click.model";
 export * from "./list.model";
 export * from "./message.model";
@@ -42,6 +44,7 @@ export const allModels = [
   Event,
   Settings,
   TrackedEmail,
+  IncomingEmail,
   TrackedLink,
   LinkClick,
 ] as const;

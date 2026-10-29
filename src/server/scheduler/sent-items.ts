@@ -3,7 +3,8 @@
 //      when, and whether it was typed by hand in Outlook ("manual") or sent by the worker ("engine").
 //      Tracking-link tokens in the body are noted (the body itself is never stored); a link that belongs
 //      to someone who is not a recipient is flagged as a wrong link.
-//   2. reads its Inbox for REPLIES to those emails (same thread, or from one of the recipients).
+//   2. reads its Inbox for REPLIES to those emails (same thread, or from one of the recipients),
+//      and stores every email there for the Inbox page (reply / bounce / auto-reply / other).
 //      A reply like "no" / "unsubscribe" → never emailed again (suppression "unsubscribed").
 //   - first look: 30 days back; after that it carries on from where the last look stopped
 //   - emails newer than 2 minutes are left for the next look (the worker may still be saving its own send)
@@ -35,6 +36,7 @@ import { refreshEngagement } from "@/server/services/engagement.service";
 import { logEvent } from "@/server/services/event.service";
 import { suppressOptOutReply } from "@/server/services/suppression.service";
 import type { TrackedEmailSource } from "@/shared/enums";
+import { recordIncomingEmails } from "./incoming";
 import { matchSentEmails, READABLE_INBOX, readingConnectionOf } from "./mailbox";
 
 const log = createLogger("sent-items");
@@ -54,6 +56,8 @@ export type SentItemsResult = {
   engine: number;
   replies: number;
   optOuts: number;
+  /** New emails stored for the Inbox page. */
+  incoming: number;
 };
 
 /** "Cannot read …" is logged once per inbox per worker run, not every 5 minutes. */
@@ -66,17 +70,27 @@ type InboxRow = {
   readingConnectionId?: Types.ObjectId | null;
   sentItemsCheckedAt?: Date | null;
   repliesCheckedAt?: Date | null;
+  incomingCheckedAt?: Date | null;
 };
 
 export async function sentItemsTick(
   now = new Date(),
   options: { provider?: (connection: { _id: Types.ObjectId }) => EmailProvider } = {},
 ): Promise<SentItemsResult> {
-  const result: SentItemsResult = { inboxes: 0, manual: 0, engine: 0, replies: 0, optOuts: 0 };
+  const result: SentItemsResult = {
+    inboxes: 0,
+    manual: 0,
+    engine: 0,
+    replies: 0,
+    optOuts: 0,
+    incoming: 0,
+  };
   if (!getEnv().MAILBOX_READING) return result;
 
   const inboxes = await Inbox.find(notDeleted(READABLE_INBOX))
-    .select("email providerConnectionId readingConnectionId sentItemsCheckedAt repliesCheckedAt")
+    .select(
+      "email providerConnectionId readingConnectionId sentItemsCheckedAt repliesCheckedAt incomingCheckedAt",
+    )
     .lean<InboxRow[]>();
   // Emails between our own inboxes are not replies from the people we email.
   const ownAddresses = new Set(inboxes.map((i) => i.email));
@@ -113,14 +127,24 @@ export async function sentItemsTick(
             : new Date(Math.min(until.getTime(), last.sentAt.getTime() + OVERLAP_MS));
         await Inbox.updateOne({ _id: inbox._id }, { $set: { sentItemsCheckedAt: checkpoint } });
       }
-      // 2. Replies in the Inbox
-      const repliesSince = sinceFor(inbox.repliesCheckedAt);
-      if (until > repliesSince) {
-        const received = await provider.listReceivedEmails(inbox.email, repliesSince);
+      // 2. Replies in the Inbox, and every email there stored for the Inbox page. One read covers both;
+      //    it starts at the older of the two checkpoints (recordReplies skips replies it already saw).
+      const readSince = new Date(
+        Math.min(
+          sinceFor(inbox.repliesCheckedAt).getTime(),
+          sinceFor(inbox.incomingCheckedAt).getTime(),
+        ),
+      );
+      if (until > readSince) {
+        const received = await provider.listReceivedEmails(inbox.email, readSince);
         const replies = await recordReplies(inbox, received, ownAddresses);
         result.replies += replies.replies;
         result.optOuts += replies.optOuts;
-        await Inbox.updateOne({ _id: inbox._id }, { $set: { repliesCheckedAt: now } });
+        result.incoming += await recordIncomingEmails(inbox, received, ownAddresses);
+        await Inbox.updateOne(
+          { _id: inbox._id },
+          { $set: { repliesCheckedAt: now, incomingCheckedAt: now } },
+        );
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
