@@ -5,11 +5,13 @@
 //   {{custom.city}}          → a custom CSV column (key as shown on the Contacts page)
 //   {{senderName}}           → the sending inbox's signature name ({{senderRole}}, {{senderEmail}})
 //   {{originalSubject}}      → in a follow-up: the subject of the first email
+//   {Hi|Hello|Hey}           → spintax: one option per person (src/shared/spintax.ts)
 //
 // Unknown variables and empty values without a fallback become "" and are reported in `missing`
 // (and as a warning), so the sender can skip that contact instead of sending "Hi ,".
 import { SENDER_VARIABLES, STANDARD_VARIABLES } from "@/shared/campaign";
 import { customKey } from "@/shared/contact";
+import { resolveSpintax } from "@/shared/spintax";
 
 export { SENDER_VARIABLES, STANDARD_VARIABLES };
 
@@ -183,16 +185,21 @@ export type RenderedEmail = {
   missing: string[];
 };
 
-/** Renders subject, plain-text body and (optional) HTML body for one contact. */
+/**
+ * Renders subject, plain-text body and (optional) HTML body for one contact.
+ * Spintax ({Hi|Hello}) is resolved first, per contact: the subject with its own seed, the text and
+ * HTML bodies with the same one (so both say the same words).
+ */
 export function renderEmail(
   templates: EmailTemplate,
   contact: TemplateContact,
   sender: TemplateSender = {},
 ): RenderedEmail {
-  const subject = renderTemplate(templates.subjectTemplate, contact, { sender });
-  const text = renderTemplate(templates.bodyTemplate, contact, { sender });
+  const spin = (template: string, part: string) => resolveSpintax(template, `${contact.email}:${part}`);
+  const subject = renderTemplate(spin(templates.subjectTemplate, "subject"), contact, { sender });
+  const text = renderTemplate(spin(templates.bodyTemplate, "body"), contact, { sender });
   const html = templates.bodyHtml
-    ? renderTemplate(templates.bodyHtml, contact, { html: true, sender })
+    ? renderTemplate(spin(templates.bodyHtml, "body"), contact, { html: true, sender })
     : null;
   return {
     // A subject is one line: line breaks from values would break the email header.

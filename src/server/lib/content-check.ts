@@ -11,6 +11,7 @@ import {
   OPT_OUT_PATTERN,
   visibleText,
 } from "@/shared/content-rules";
+import { spintaxProblems } from "@/shared/spintax";
 import type { EmailTemplate } from "./template";
 
 export { SPAM_PHRASES } from "@/shared/content-rules";
@@ -23,6 +24,10 @@ export function checkEmailContent(template: EmailTemplate, label = "The email"):
   const html = template.bodyHtml ?? "";
   const visible = visibleText(template);
 
+  problems.push(
+    ...spintaxProblems(template.subjectTemplate, `${label}'s subject`),
+    ...spintaxProblems(template.bodyTemplate, label),
+  );
   const spam = findSpamPhrases(visible).map((s) => `"${s.phrase}"`);
   if (spam.length) problems.push(`${label} uses spam-trigger words: ${spam.join(", ")}`);
   if (hasDoubleBang(visible))
