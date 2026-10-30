@@ -294,6 +294,13 @@ export function WizardStepEmail({
             <code>{"{{firstName|there}}"}</code>. Without a fallback, a contact missing that value
             is skipped (never sent “Hi ,”). “Your name / role” come from the inbox (Inboxes → Edit).
           </p>
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Spintax:</span> write{" "}
+            <code>{"{Hi|Hello|Hey}"}</code> and each person gets one of the options, so no two emails
+            are word-for-word the same. Works in the subject and the email; an empty option makes a
+            word optional, e.g. <code>{"{quick |}call"}</code>. The same person always gets the same
+            words.
+          </p>
         </div>
 
         <Field>

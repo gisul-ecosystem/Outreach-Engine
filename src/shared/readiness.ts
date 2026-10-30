@@ -19,6 +19,7 @@ import {
   VARIABLE_PATTERN,
 } from "./content-rules";
 import { customKey } from "./contact";
+import { countSpinVersions, firstSpinOption, spintaxProblems } from "./spintax";
 
 export type ReadinessLevel = "ok" | "warning" | "error";
 export type ReadinessField = "subjectTemplate" | "bodyTemplate" | "bodyHtml";
@@ -224,10 +225,17 @@ const PLACEHOLDERS = [
         fixes,
       });
 
-    const subject = t.subjectTemplate ?? "";
-    const body = t.bodyTemplate ?? "";
-    const html = t.bodyHtml ?? "";
-    const all = `${subject}\n${body}\n${html}`;
+    // `full` is the template with every {a|b} option (scanned for spam words, links, images…);
+    // subject / body / html take each group's first option, for checks that read lines and wording.
+    const full = {
+      subject: t.subjectTemplate ?? "",
+      body: t.bodyTemplate ?? "",
+      html: t.bodyHtml ?? "",
+    };
+    const subject = firstSpinOption(full.subject);
+    const body = firstSpinOption(full.body);
+    const html = firstSpinOption(full.html);
+    const all = `${full.subject}\n${full.body}\n${full.html}`;
 
     // ---------- Must fix ----------
     if (!subject.trim()) {
@@ -358,7 +366,7 @@ const PLACEHOLDERS = [
         "links",
       );
     }
-    if (hasImage(html)) {
+    if (hasImage(full.html)) {
       risky++;
       add(
         "links-images",
@@ -368,7 +376,7 @@ const PLACEHOLDERS = [
         "image",
       );
     }
-    const attachment = ATTACHMENT.exec(`${body}\n${htmlToText(html)}`);
+    const attachment = ATTACHMENT.exec(`${full.body}\n${htmlToText(full.html)}`);
     if (attachment) {
       risky++;
       add(
@@ -379,7 +387,7 @@ const PLACEHOLDERS = [
         "attachment",
       );
     }
-    const shortener = SHORTENERS.exec(`${body}\n${html}`);
+    const shortener = SHORTENERS.exec(`${full.body}\n${full.html}`);
     if (shortener) {
       risky++;
       add(
@@ -390,7 +398,7 @@ const PLACEHOLDERS = [
         "shortener",
       );
     }
-    if (hasActiveContent(html)) {
+    if (hasActiveContent(full.html)) {
       risky++;
       add(
         "links-images",
@@ -400,7 +408,7 @@ const PLACEHOLDERS = [
           {
             kind: "show",
             field: "bodyHtml",
-            find: /<(form|script|iframe|video|object)/i.exec(html)?.[0] ?? "<",
+            find: /<(form|script|iframe|video|object)/i.exec(full.html)?.[0] ?? "<",
           },
         ],
         "active",
@@ -409,7 +417,10 @@ const PLACEHOLDERS = [
     if (!risky) add("links-images", "ok", "At most one link, no images, no attachment talk.");
 
     // Spam wording (these blocked Start before this panel existed, so they stay "Must fix")
-    const visible = `${subject}\n${body}\n${htmlToText(html)}`.replace(VARIABLE_PATTERN, " ");
+    const visible = `${full.subject}\n${full.body}\n${htmlToText(full.html)}`.replace(
+      VARIABLE_PATTERN,
+      " ",
+    );
     let spammy = 0;
     for (const { phrase, found } of findSpamPhrases(visible)) {
       spammy++;
@@ -462,6 +473,41 @@ const PLACEHOLDERS = [
       );
     }
     if (!spammy) add("spam-words", "ok", 'No spam words, no shouting in capitals, no "!!".');
+
+    // Spintax: a broken {a|b} group would be sent as written, braces and all.
+    const broken = [
+      ...spintaxProblems(full.subject, "Your subject"),
+      ...spintaxProblems(full.body, "Your email"),
+    ];
+    for (const message of broken) add("spintax", "error", message, undefined, message);
+    if (!broken.length) {
+      const versions = countSpinVersions(full.subject) * countSpinVersions(full.body);
+      if (versions > 1) {
+        add(
+          "spintax",
+          "ok",
+          `Spintax gives this email ${versions >= 1_000_000 ? "over a million" : versions.toLocaleString("en")} different wordings — each person gets one.`,
+        );
+      } else if (body.trim()) {
+        const greeting = /^\s*(Hi|Hello|Hey)\b/i.exec(body)?.[1];
+        add(
+          "spintax",
+          "warning",
+          "Every person gets the exact same words. Add spintax like {Hi|Hello|Hey} so each email reads a little differently.",
+          greeting
+            ? [
+                {
+                  kind: "replace",
+                  label: "Vary the greeting",
+                  field: "bodyTemplate",
+                  find: greeting,
+                  replace: "{Hi|Hello|Hey}",
+                },
+              ]
+            : undefined,
+        );
+      }
+    }
 
     // ---------- Warnings ----------
     const bodyLines = lines(body);

@@ -15,7 +15,7 @@ const GOOD_BODY = `Hi {{firstName|there}},
 
 I noticed your team is hiring engineers and wanted to share how we help similar companies cut their cloud bills by about a third without changing any code.
 
-Would a short call next week be useful?
+Would a short call {next week|this week} be useful?
 
 Best,
 {{senderName}}
